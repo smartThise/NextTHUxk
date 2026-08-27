@@ -20,8 +20,18 @@ console.log(TAG, 'loading on', location.href);
 
 // ─── Init Config State ────────────────────────────────────────
 state.SEM = (location.href.match(/p_xnxq=([^&]+)/) || ['', ''])[1];
-state.BASE = location.origin;
-state.isZhjwxk = location.hostname === 'zhjwxk.cic.tsinghua.edu.cn';
+
+// WebVPN embeds the upstream host in the pathname, for example:
+// /http/<encoded-host>/xkBks.vxkBksXkbBs.do?m=main
+// Preserve that prefix for every subsequent endpoint request.
+const _webvpn = location.hostname === 'webvpn.tsinghua.edu.cn';
+const _xkPathAt = location.pathname.search(/\/(?:xkBks|jhBks|js\.)/);
+const _webvpnPrefix = _webvpn && _xkPathAt >= 0
+  ? location.pathname.slice(0, _xkPathAt)
+  : '';
+state.BASE = location.origin + _webvpnPrefix;
+state.isZhjwxk = location.hostname === 'zhjwxk.cic.tsinghua.edu.cn'
+  || (_webvpn && /\/xkBks\./.test(location.pathname));
 state.isZhjw = location.hostname === 'zhjw.cic.tsinghua.edu.cn';
 
 // ─── Load CSS ─────────────────────────────────────────────────
