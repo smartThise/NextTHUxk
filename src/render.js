@@ -800,16 +800,24 @@ NX.checkPlanCoverage = function () {
   collect(allCourses.filter(c => c.selected));
   collect(stageCart);
   savedDrafts.forEach(d => collect(d.courses));
+  // 行解析：池内行优先，暂存/草稿自带行兜底（暂存项可能不在 allCourses）。
+  // 此前本地弱判据只查 department/attr——学生已选体育课但搜索行属性稀疏
+  // （attr/department 空）时 hasSports 恒 false → 体育必修 0/1，而左栏旧渲染
+  // 还是 1/1（左旧右新同时上屏，用户实录）。统一走 NX.isSportsCourse 判据
+  // （排除表+attr/typeLabel/typeCode+院系），暂存/草稿自带 flag=ty 也认。
+  const rowOf = (code) => allCourses.find(x => x.code === code) || detail[code] || null;
   const isSports = (code) => {
-    const c = allCourses.find(x => x.code === code);
-    return c && ((c.department || '').includes('体育') || (c.attr || '') === '体育');
+    const c = rowOf(code);
+    if (!c) return false;
+    if ((c.flag || '') === 'ty') return true;
+    return NX.isSportsCourse(c);
   };
   const hasSports = [...codes].some(isSports) || stageCart.some(c => isSports(c.code));
-  const isSecondLang = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('第二外国语') || c.name.includes('二外')); };
+  const isSecondLang = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('第二外国语') || (c.name || '').includes('二外')); };
   const hasSecondLang = [...codes].some(isSecondLang) || stageCart.some(c => isSecondLang(c.code));
-  const isAdvEnglish = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('进阶读写') || c.name.includes('进阶')); };
+  const isAdvEnglish = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('进阶读写') || (c.name || '').includes('进阶')); };
   const hasAdvEnglish = [...codes].some(isAdvEnglish) || stageCart.some(c => isAdvEnglish(c.code));
-  const isBasicEnglish = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('阅读写作') || c.name.includes('听说交流')); };
+  const isBasicEnglish = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('阅读写作') || (c.name || '').includes('听说交流')); };
 
   return planData.map(p => {
     let covered = codes.has(p.code);
@@ -863,6 +871,9 @@ NX.renderPlanView = function (searchQuery) {
     html += '</div>';
   }
   el.innerHTML = html;
+  // 左栏卡与右栏视图同刻刷新（两处都出自 checkPlanCoverage，但渲染时机
+  // 不同会各拿各的快照——用户实录左 1/1 右 0/1 同屏）
+  try { NX.renderPlan(state.planData); } catch (e) {}
   // 条目点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
     item.onclick = () => NX.jumpToCourse(item.dataset.code, '0');
