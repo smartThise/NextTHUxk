@@ -439,7 +439,10 @@ NX.renderPreviewTT = function (courses, label) {
   const hm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   let axisLines = '';
   for (let m = A0; m <= A1; m += 60) axisLines += '<span class="nx-tta-hl" style="top:' + Math.round((m - A0) * PX) + 'px">' + hm(m) + '</span>';
-  let h = '<div class="nx-tta"><div class="nx-tta-axis" style="height:' + H + 'px">' + axisLines + '</div>';
+  // 轴列与日列同构：日列顶有 .nx-tta-day-h（星期头）把网格体往下推一个头高，
+// 轴列没有同款头 → 整条钟点轴相对网格/课块整体上偏（用户实录「整体都向上
+// 偏移了」）。补一个同 class 隐藏头，轴原点与 .nx-tta-day-b 顶对齐。
+  let h = '<div class="nx-tta"><div style="flex:0 0 36px;min-width:36px"><div class="nx-tta-day-h" style="visibility:hidden">&nbsp;</div><div class="nx-tta-axis" style="height:' + H + 'px">' + axisLines + '</div></div>';
   const days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   days.forEach((dn, di) => {
     const blocks = raw.filter(b => b.day === di + 1).map(b => {
@@ -1121,7 +1124,7 @@ NX.renderListFooter = function (o) {
     } else {
       totalPages = state._searchTotalPages || Math.max(1, Math.ceil(o.list.length / NX.PAGE_SIZE));
       curPage = Math.min(Math.max(1, state._uiPage || 1), totalPages);
-      gotoPage = n => { state._uiPage = n; NX.filterCourses(); };
+      gotoPage = n => { state._uiPage = n; NX.loadSearchPageTo(n); NX.filterCourses(); };
       nextDis = curPage >= totalPages;
       cur.textContent = '第 ' + curPage + ' 页 / 共 ' + totalPages + ' 页' +
         (!state._searchIncomplete ? '（' + (state._searchTotalRows > 0 ? state._searchTotalRows + ' 条记录' : o.list.length + ' 门') + '）' : '');
@@ -1148,6 +1151,42 @@ NX.renderListFooter = function (o) {
   pager.appendChild(goInput);
   pager.appendChild(mkBtn('GO', false, doJump));
   listEl.appendChild(pager);
+};
+
+// 搜索模式跳页补载（用户实录：课号查询共 2 页只探第 1 页——storm
+// exactCode probeTo=1——下一页把 _uiPage 置 2 后 filterCourses 又钳回已装载
+// 页 1，按钮永远「点了没反应」，页码却显示服务端总页数=「显示有误」）。
+// 目标页 > 已装载页 → 逐页补拉（单页 serverSearch，code_seq 去重并入），
+// 拉完回置目标页再渲染；GO 超界由钳制兜底，forceAll 仍走 loadAllSearch。
+NX.loadSearchPageTo = async function (target) {
+  const state = NX.state;
+  if (state._loadingAll || state._ssBusy) return;
+  const loaded = Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE);
+  if (!target || target <= loaded) return;
+  const cap = state._searchTotalPages || 0;
+  const to = cap > 0 ? Math.min(target, cap) : target;
+  if (to <= loaded) return;
+  state._loadingAll = true;
+  try {
+    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + (c.seq || '0')));
+    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+    for (let p = loaded + 1; p <= to; p++) {
+      const res = await NX.serverSearch({ ...NX.buildSearchOpts(), page: p });
+      const rows = res.rows || [];
+      if (!rows.length) break;
+      const seen = new Set((state._searchRows || []).map(c => c.code + '_' + (c.seq || '0')));
+      rows.forEach(r => {
+        const k = r.code + '_' + (r.seq || '0');
+        r.selected = selKeys.has(k);
+        r.isCandidate = candKeys.has(k);
+        if (!seen.has(k)) { seen.add(k); (state._searchRows = state._searchRows || []).push(r); }
+      });
+      if (NX.mergeServerRows(rows)) NX.rebuildCourseMap();
+    }
+  } catch (e) { console.warn(NX.TAG, 'search page load:', e); }
+  state._loadingAll = false;
+  state._uiPage = Math.min(to, Math.max(1, Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE)));
+  NX.filterCourses();
 };
 
 // 「加载全部」（OneTHU loadAllSearch 同款）：forceAll 全量补齐探测页，
