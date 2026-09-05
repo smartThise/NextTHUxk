@@ -948,7 +948,7 @@ NX.fetchCandidateCourses = async function () {
     } catch (e) {
       // 500 两解：① 候补/选课阶段未开放（已知服务器行为）；② 网络代理出口 IP
       // 被教务拦（kbSearch 同代理能 200 就不是 IP 问题）。反正都走兜底链。
-      console.warn(NX.TAG, 'dlSearch failed (' + e.message + ') → 课表兜底（阶段未开放或代理出口被拦均可能）');
+      console.warn(NX.TAG, 'dlSearch failed (' + e.message + ') → 课表兜底（sem=' + SEM + '；阶段未开放/学期参数错/代理出口被拦均可能）');
     }
     const parseDl = html => {
       const out = [];
@@ -1001,7 +1001,7 @@ NX.fetchCandidateCourses = async function () {
         const candMarks = (kbDual.gbk.match(/候选：/g) || []).length;
         const strictBlocks = (kbDual.gbk.match(/p_id=\d+;\d{6,}/g) || []).length;
         const totalBlocks = (kbDual.gbk.match(/p_id=/g) || []).length;
-        console.warn(NX.TAG, 'kbSearch 0 candidates: gbk len', kbDual.gbk.length, 'utf8 len', kbDual.utf8.length,
+        console.warn(NX.TAG, 'kbSearch 0 candidates: sem=' + SEM, '| gbk len', kbDual.gbk.length, 'utf8 len', kbDual.utf8.length,
           '| 候选标记:', candMarks, '| 严格课号块:', strictBlocks, '/', totalBlocks);
         if (candMarks === 0) {
           console.warn(NX.TAG, 'kbSearch 页面无「候选：」标记 = 课表上没有排队课（正常空，非故障）');
