@@ -439,7 +439,10 @@ NX.renderPreviewTT = function (courses, label) {
   const hm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   let axisLines = '';
   for (let m = A0; m <= A1; m += 60) axisLines += '<span class="nx-tta-hl" style="top:' + Math.round((m - A0) * PX) + 'px">' + hm(m) + '</span>';
-  let h = '<div class="nx-tta"><div class="nx-tta-axis" style="height:' + H + 'px">' + axisLines + '</div>';
+  // 轴列与日列同构：日列顶有 .nx-tta-day-h（星期头）把网格体往下推一个头高，
+// 轴列没有同款头 → 整条钟点轴相对网格/课块整体上偏（用户实录「整体都向上
+// 偏移了」）。补一个同 class 隐藏头，轴原点与 .nx-tta-day-b 顶对齐。
+  let h = '<div class="nx-tta"><div style="flex:0 0 36px;min-width:36px"><div class="nx-tta-day-h" style="visibility:hidden">&nbsp;</div><div class="nx-tta-axis" style="height:' + H + 'px">' + axisLines + '</div></div>';
   const days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   days.forEach((dn, di) => {
     const blocks = raw.filter(b => b.day === di + 1).map(b => {
@@ -797,16 +800,24 @@ NX.checkPlanCoverage = function () {
   collect(allCourses.filter(c => c.selected));
   collect(stageCart);
   savedDrafts.forEach(d => collect(d.courses));
+  // 行解析：池内行优先，暂存/草稿自带行兜底（暂存项可能不在 allCourses）。
+  // 此前本地弱判据只查 department/attr——学生已选体育课但搜索行属性稀疏
+  // （attr/department 空）时 hasSports 恒 false → 体育必修 0/1，而左栏旧渲染
+  // 还是 1/1（左旧右新同时上屏，用户实录）。统一走 NX.isSportsCourse 判据
+  // （排除表+attr/typeLabel/typeCode+院系），暂存/草稿自带 flag=ty 也认。
+  const rowOf = (code) => allCourses.find(x => x.code === code) || detail[code] || null;
   const isSports = (code) => {
-    const c = allCourses.find(x => x.code === code);
-    return c && ((c.department || '').includes('体育') || (c.attr || '') === '体育');
+    const c = rowOf(code);
+    if (!c) return false;
+    if ((c.flag || '') === 'ty') return true;
+    return NX.isSportsCourse(c);
   };
   const hasSports = [...codes].some(isSports) || stageCart.some(c => isSports(c.code));
-  const isSecondLang = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('第二外国语') || c.name.includes('二外')); };
+  const isSecondLang = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('第二外国语') || (c.name || '').includes('二外')); };
   const hasSecondLang = [...codes].some(isSecondLang) || stageCart.some(c => isSecondLang(c.code));
-  const isAdvEnglish = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('进阶读写') || c.name.includes('进阶')); };
+  const isAdvEnglish = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('进阶读写') || (c.name || '').includes('进阶')); };
   const hasAdvEnglish = [...codes].some(isAdvEnglish) || stageCart.some(c => isAdvEnglish(c.code));
-  const isBasicEnglish = (code) => { const c = allCourses.find(x => x.code === code); return c && (c.name.includes('阅读写作') || c.name.includes('听说交流')); };
+  const isBasicEnglish = (code) => { const c = rowOf(code); return !!c && ((c.name || '').includes('阅读写作') || (c.name || '').includes('听说交流')); };
 
   return planData.map(p => {
     let covered = codes.has(p.code);
@@ -860,6 +871,9 @@ NX.renderPlanView = function (searchQuery) {
     html += '</div>';
   }
   el.innerHTML = html;
+  // 左栏卡与右栏视图同刻刷新（两处都出自 checkPlanCoverage，但渲染时机
+  // 不同会各拿各的快照——用户实录左 1/1 右 0/1 同屏）
+  try { NX.renderPlan(state.planData); } catch (e) {}
   // 条目点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
     item.onclick = () => NX.jumpToCourse(item.dataset.code, '0');
@@ -1121,7 +1135,7 @@ NX.renderListFooter = function (o) {
     } else {
       totalPages = state._searchTotalPages || Math.max(1, Math.ceil(o.list.length / NX.PAGE_SIZE));
       curPage = Math.min(Math.max(1, state._uiPage || 1), totalPages);
-      gotoPage = n => { state._uiPage = n; NX.filterCourses(); };
+      gotoPage = n => { state._uiPage = n; NX.loadSearchPageTo(n); NX.filterCourses(); };
       nextDis = curPage >= totalPages;
       cur.textContent = '第 ' + curPage + ' 页 / 共 ' + totalPages + ' 页' +
         (!state._searchIncomplete ? '（' + (state._searchTotalRows > 0 ? state._searchTotalRows + ' 条记录' : o.list.length + ' 门') + '）' : '');
@@ -1150,6 +1164,42 @@ NX.renderListFooter = function (o) {
   listEl.appendChild(pager);
 };
 
+// 搜索模式跳页补载（用户实录：课号查询共 2 页只探第 1 页——storm
+// exactCode probeTo=1——下一页把 _uiPage 置 2 后 filterCourses 又钳回已装载
+// 页 1，按钮永远「点了没反应」，页码却显示服务端总页数=「显示有误」）。
+// 目标页 > 已装载页 → 逐页补拉（单页 serverSearch，code_seq 去重并入），
+// 拉完回置目标页再渲染；GO 超界由钳制兜底，forceAll 仍走 loadAllSearch。
+NX.loadSearchPageTo = async function (target) {
+  const state = NX.state;
+  if (state._loadingAll || state._ssBusy) return;
+  const loaded = Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE);
+  if (!target || target <= loaded) return;
+  const cap = state._searchTotalPages || 0;
+  const to = cap > 0 ? Math.min(target, cap) : target;
+  if (to <= loaded) return;
+  state._loadingAll = true;
+  try {
+    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + (c.seq || '0')));
+    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+    for (let p = loaded + 1; p <= to; p++) {
+      const res = await NX.serverSearch({ ...NX.buildSearchOpts(), page: p });
+      const rows = res.rows || [];
+      if (!rows.length) break;
+      const seen = new Set((state._searchRows || []).map(c => c.code + '_' + (c.seq || '0')));
+      rows.forEach(r => {
+        const k = r.code + '_' + (r.seq || '0');
+        r.selected = selKeys.has(k);
+        r.isCandidate = candKeys.has(k);
+        if (!seen.has(k)) { seen.add(k); (state._searchRows = state._searchRows || []).push(r); }
+      });
+      if (NX.mergeServerRows(rows)) NX.rebuildCourseMap();
+    }
+  } catch (e) { console.warn(NX.TAG, 'search page load:', e); }
+  state._loadingAll = false;
+  state._uiPage = Math.min(to, Math.max(1, Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE)));
+  NX.filterCourses();
+};
+
 // 「加载全部」（OneTHU loadAllSearch 同款）：forceAll 全量补齐探测页，
 // 结果沿用当前关键词的服务端真值，页码/条数刷新。
 NX.loadAllSearch = async function () {
@@ -1174,7 +1224,7 @@ NX.loadAllSearch = async function () {
     state._searchIncomplete = false;
     if (res.totalPages) state._searchTotalPages = res.totalPages;
     if (res.totalRows) state._searchTotalRows = res.totalRows;
-    state._searchError = res.pageKind === 'unknown' ? '教务返回异常页，可能需退出重新登录' : '';
+    state._searchError = res.pageKind === 'unknown' ? '教务返回异常页（已自动重进未果，WebVPN 会话已失效）——请退出 WebVPN 重新登录' : '';
   } catch (e) {
     console.warn(NX.TAG, 'load all:', e);
   }
@@ -1262,7 +1312,7 @@ NX.runServerSearch = async function () {
         // 分页条出「加载全部」补齐入口
         state._searchIncomplete = queryMode && !!(res.totalRows && (res.rows || []).length < res.totalRows);
         state._searchError = res.pageKind === 'unknown'
-          ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '，可能需退出重新登录'
+          ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '（已自动重进未果）——请退出 WebVPN 重新登录'
           : (res.pageKind === 'empty' ? '' : '');
       } catch (e) {
         console.warn(NX.TAG, 'server search scheduled:', e);
