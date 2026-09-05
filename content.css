@@ -122,6 +122,11 @@
   box-shadow: var(--nx-lg-edge), 0 12px 40px rgba(29,31,36,.22);
 }
 #nextthuxk-launch:active { transform: scale(.98); }
+/* 液态玻璃降级：引擎不支持 backdrop-filter 时给实底（半透明白叠页面色因引擎而异，
+   无磨砂时按钮可能糊到看不出——学弟 Edge 实录「按钮不见了」的兜底之一） */
+@supports not ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+  #nextthuxk-launch { background: rgba(255,255,255,.94); }
+}
 #nextthuxk-dashboard {
   position: fixed;
   inset: 0;

@@ -644,8 +644,9 @@ $('nextthuxk-preview-reset').onclick = () => {
 // Modal close
 $('nextthuxk-modal-close').onclick = () => $('nextthuxk-modal').classList.remove('show');
 $('nextthuxk-modal').onclick = e => { if (e.target === $('nextthuxk-modal')) $('nextthuxk-modal').classList.remove('show'); };
-_browser.runtime.onMessage.addListener(msg => {
+_browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'nextthuxk-toggle') NX.launch();
+  if (msg.action === 'nextthuxk-ping') sendResponse({ ok: true, ver: NX.CUR_VER || '?', zhjwxk: !!state.isZhjwxk });
 });
 
 console.log(TAG, 'ready');

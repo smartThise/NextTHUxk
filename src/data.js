@@ -946,7 +946,9 @@ NX.fetchCandidateCourses = async function () {
     try {
       dual = await NX.fetchPageDual(BASE + '/xkBks.vxkBksXkbBs.do?m=dlSearch&p_xnxq=' + SEM);
     } catch (e) {
-      console.warn(NX.TAG, 'dlSearch failed (' + e.message + ') → 课表兜底');
+      // 500 两解：① 候补/选课阶段未开放（已知服务器行为）；② 网络代理出口 IP
+      // 被教务拦（kbSearch 同代理能 200 就不是 IP 问题）。反正都走兜底链。
+      console.warn(NX.TAG, 'dlSearch failed (' + e.message + ') → 课表兜底（阶段未开放或代理出口被拦均可能）');
     }
     const parseDl = html => {
       const out = [];
@@ -993,8 +995,21 @@ NX.fetchCandidateCourses = async function () {
         const kbCand = NX.pickDecoded(h => NX.parseTimetableCandidates(h), kbDual);
         console.log(NX.TAG, 'dlSearch empty → kbSearch candidates:', kbCand.length);
         if (kbCand.length) return kbCand;
-        // 诊断（OneTHU zhjwxkDebug 语义）：0 命中时把页面形态留在控制台
-        console.warn(NX.TAG, 'kbSearch 0 candidates: gbk len', kbDual.gbk.length, 'utf8 len', kbDual.utf8.length, 'p_id blocks:', (kbDual.gbk.match(/p_id=/g) || []).length);
+        // 诊断（OneTHU zhjwxkDebug 语义）：0 命中时把页面形态留在控制台，
+        // 并区分「真无排队课」与「解析失配」——学弟实录 4 个 p_id 块 0 候选的
+        // 两种解释（课表只有已选课 / 标记变体）在这里一刀切开
+        const candMarks = (kbDual.gbk.match(/候选：/g) || []).length;
+        const strictBlocks = (kbDual.gbk.match(/p_id=\d+;\d{6,}/g) || []).length;
+        const totalBlocks = (kbDual.gbk.match(/p_id=/g) || []).length;
+        console.warn(NX.TAG, 'kbSearch 0 candidates: gbk len', kbDual.gbk.length, 'utf8 len', kbDual.utf8.length,
+          '| 候选标记:', candMarks, '| 严格课号块:', strictBlocks, '/', totalBlocks);
+        if (candMarks === 0) {
+          console.warn(NX.TAG, 'kbSearch 页面无「候选：」标记 = 课表上没有排队课（正常空，非故障）');
+        } else {
+          const m0 = /p_id=\d+;[\s\S]{0,240}/.exec(kbDual.gbk);
+          console.warn(NX.TAG, 'kbSearch 有候选标记但解析 0 条 → 解析失配，首块样本:',
+            m0 ? m0[0].replace(/\s+/g, ' ').slice(0, 200) : '(无)');
+        }
       } catch (e) { console.warn(NX.TAG, 'kbSearch fallback:', e); }
     }
     return candidates;
