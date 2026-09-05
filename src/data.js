@@ -919,7 +919,7 @@ NX.fetchQueueData = async function (courses) {
         if (!qFailWarned && qFailStreak >= 3) {
           qFailWarned = true;
           console.warn(NX.TAG, 'queue count batches keep failing — session may be invalidated');
-          if (!NX.state.fetchWarn) NX.state.fetchWarn = '排队人数获取失败，可能需退出重新登录';
+          if (!NX.state.fetchWarn) NX.state.fetchWarn = '排队人数获取失败（WebVPN 会话已失效）——请退出 WebVPN 重新登录';
         }
       }
     });
@@ -1279,6 +1279,23 @@ NX.parseTimetableCandidates = function (html) {
 };
 
 // ─── Merge ────────────────────────────────────────────────────
+
+// WebVPN 票据自愈：重进一次教务入口根换票（wengine_vpn_ticket 过期而主会话
+// 活着的实录修法）。60s 冷却——合流窗口内 N 个请求全吃壳页只重进一次。
+NX.reenterZhjwxk = async function () {
+  const now = Date.now();
+  if (NX.state._reenterAt && now - NX.state._reenterAt < 60000) return false;
+  NX.state._reenterAt = now;
+  try {
+    const html = await NX._fetchRaw(NX.state.BASE + '/');
+    const ok = !NX.isXkDeadHtml(html);
+    console.log(NX.TAG, 'webvpn 重进入口换票:', ok ? '成功，重试原请求' : '入口根也是死页=主会话真死，需重新登录');
+    return ok;
+  } catch (e) {
+    console.warn(NX.TAG, 'webvpn 重进入口失败:', e);
+    return false;
+  }
+};
 
 NX.isXkDeadHtml = function (html) {
   return html.includes('accessDenied')

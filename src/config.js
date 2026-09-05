@@ -99,7 +99,7 @@ NX.decodeBest = function (buf, url) {
   return NX._GBK_URL_RE.test(url) ? asGbk : asUtf8;
 };
 
-NX.fetchPage = async function (url, opts = {}) {
+NX._fetchRaw = async function (url, opts = {}) {
   // 15s 超时（AbortController）：无超时则单请求挂起会卡死一切等待它的链路
   // （已选时间回填卡「查询中」实录）
   const ctl = new AbortController();
@@ -114,6 +114,21 @@ NX.fetchPage = async function (url, opts = {}) {
   if (ct.includes('gb')) return new TextDecoder('gbk').decode(buf);
   if (ct.includes('utf-8')) return new TextDecoder('utf-8').decode(buf);
   return NX.decodeBest(buf, url);
+};
+
+// WebVPN 票据自愈（OneTHU proxyZhjwxkApi 死页自愈语义回移；用户实录：学生
+// 已登录仍吃 __vpn_hostname_data 壳页——旧提示「退出重新登录」是误诊）。
+// 主 WebVPN 会话活着但 wengine_vpn_ticket 过期时，请求被 302 到壳页；
+// 重进一次教务入口根（BASE）即自动换票，无需退出登录。60s 冷却防循环。
+NX.fetchPage = async function (url, opts = {}) {
+  const html = await NX._fetchRaw(url, opts);
+  const shell = html && (html.includes('__vpn_hostname_data') || html.includes('__vpn_app_hostname_data'));
+  if (shell && NX.isXkDeadHtml && NX.reenterZhjwxk) {
+    if (await NX.reenterZhjwxk()) {
+      try { return await NX._fetchRaw(url, opts); } catch (e2) { console.warn(NX.TAG, 'webvpn 换票后重试仍失败，保留壳页给上层诊断', e2); }
+    }
+  }
+  return html;
 };
 
 // 双解码抓取（OneTHU reqwest 自动转码的最忠实等价）：返回 gbk/utf8 两种解码，

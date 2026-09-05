@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NextTHUxk",
   "short_name": "NextTHUxk",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "下一代选课 - 基于 AI 决策与现代双栏 UI 的选课无感辅助系统。",
   "permissions": [
     "activeTab",

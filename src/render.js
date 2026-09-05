@@ -1174,7 +1174,7 @@ NX.loadAllSearch = async function () {
     state._searchIncomplete = false;
     if (res.totalPages) state._searchTotalPages = res.totalPages;
     if (res.totalRows) state._searchTotalRows = res.totalRows;
-    state._searchError = res.pageKind === 'unknown' ? '教务返回异常页，可能需退出重新登录' : '';
+    state._searchError = res.pageKind === 'unknown' ? '教务返回异常页（已自动重进未果，WebVPN 会话已失效）——请退出 WebVPN 重新登录' : '';
   } catch (e) {
     console.warn(NX.TAG, 'load all:', e);
   }
@@ -1262,7 +1262,7 @@ NX.runServerSearch = async function () {
         // 分页条出「加载全部」补齐入口
         state._searchIncomplete = queryMode && !!(res.totalRows && (res.rows || []).length < res.totalRows);
         state._searchError = res.pageKind === 'unknown'
-          ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '，可能需退出重新登录'
+          ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '（已自动重进未果）——请退出 WebVPN 重新登录'
           : (res.pageKind === 'empty' ? '' : '');
       } catch (e) {
         console.warn(NX.TAG, 'server search scheduled:', e);
