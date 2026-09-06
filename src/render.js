@@ -1392,7 +1392,8 @@ NX.highlightJumpTarget = function () {
 
 /** 精确课号跳转的补页：目标课序不在已加载页（课号 >20 课序跨页）时，拉齐该
  *  课号其余页再定位。护栏：页 1 必须全部属于该课号（教务忽略 p_kch 时返回
- *  未过滤首页，此时补页等于全库爬，直接放弃）；最多补到第 5 页。 */
+ *  未过滤首页，此时补页等于全库爬，直接放弃）；上限 25 页（serverSearchStorm
+ *  「总页数已知 ≤25 全量」同款——覆盖单课号全部课序，防的只是异常值）。 */
 NX.fetchJumpRestPages = async function (code, seq) {
   const state = NX.state;
   try {
@@ -1400,7 +1401,7 @@ NX.fetchJumpRestPages = async function (code, seq) {
     if (!so.kch || so.kch !== String(code)) return;
     const rows = state._searchRows || [];
     if (!rows.length || !rows.every(r => String(r.code) === String(code))) return;
-    const totalPages = Math.min(state._searchTotalPages || 1, 5);
+    const totalPages = Math.min(state._searchTotalPages || 1, 25);
     const loaded = Math.ceil(rows.length / NX.PAGE_SIZE);
     if (totalPages <= loaded) return;
     await NX.loadSearchPageTo(totalPages);
