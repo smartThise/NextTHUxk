@@ -596,6 +596,7 @@ NX.jumpToCourse = function (code, seq, teacher, time) {
   state._jumpSeq = seq || '0';
   state._jumpTeacher = String(teacher || '').trim();
   state._jumpTime = String(time || '').trim();
+  state._jumpPoolTried = false;   // 池渲染一次性保险丝（jumpToCourse 重置）
   state._jumpAutoAll = true;   // 目标缺失且数据不完整时，允许自动补齐一轮（#33）
   state._serverSig = null;   // 强制发新服务端查询（课号 → kch 精确）
   NX.filterCourses();
@@ -1514,14 +1515,19 @@ NX.highlightJumpTarget = function () {
     const poolRows = (state.allCourses || []).filter(x => x.code === code);
     const poolHit = poolRows.find(x => String(x.seq || '0') === String(seq) && tOk(x)) ||
       poolRows.find(x => String(x.seq || '0') === String(seq));
-    if (poolHit && poolRows.length > 1) {
+    if (poolHit && poolRows.length > 1 && !state._jumpPoolTried) {
+      state._jumpPoolTried = true;   // 只试一次：重入再 miss 走放弃路径，绝不递归
       try {
-        console.log(NX.TAG, '[NX-33] 跳转 → 池渲染', poolRows.length, '行（绕开搜索管道）');
+        const PS = NX.PAGE_SIZE || 20;
+        const poolIdx = poolRows.indexOf(poolHit);
+        console.log(NX.TAG, '[NX-33] 跳转 → 池渲染', poolRows.length, '行, 目标在第',
+          Math.floor(poolIdx / PS) + 1, '页（本地翻页定位）');
         state._searchRows = poolRows.slice();
         state._searchRowsFull = true;
         state._searchRowsFullTag = NX.serverSigOf();
         state._searchIncomplete = false;
         state._searchError = '';
+        state._uiPage = Math.floor(poolIdx / PS) + 1;   // 目标所在页——切片后必含目标
         NX.filterCourses();
         NX.highlightJumpTarget();
       } catch (e) { console.warn(NX.TAG, 'jump pool render:', e); }
