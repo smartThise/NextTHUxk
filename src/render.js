@@ -1508,6 +1508,12 @@ NX.highlightJumpTarget = function () {
         : '未命中(列表 ' + list.length + ' 行)');
   } catch (e) {}
   if (idx === -1) {
+    // 占位课序（培养方案等课号粒度入口 seq='0'）：列表已是该课全部课序 = 任务
+    // 完成，静默收尾（0 课序行多半不存在，别白爬全量+挂 30s 意图）
+    if (seq === '0' && list.some(c => String(c.code || '') === String(code))) {
+      state._jumpCode = null;
+      return;
+    }
     // 池里已有该课号多行（概率回填等已爬全量进池）→ 直接用池数据渲染该课号
     // 列表并重入高亮，绕开搜索管道全部竞态（deferred 重跑降级/浅层回写/
     // 中途吞意图——#33 三层实锤全在这条管道上）。搜索栏已是该课号，sig 一致
