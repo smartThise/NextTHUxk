@@ -172,6 +172,23 @@ NX.getCourse = function (code, seq) {
   return allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
 };
 
+// 暂存/草稿行 → 池内数据源（Issue #33 定案）：课序精确优先；兜底必须「教师一致」
+// 或「该课号池内唯一」——绝不吃同名第一门（数据不完整池里第一门常是别的老师的课，
+// 概率/余量错标误导极强：用户实测王洪川 100% 被错标成刘烨 9%）。
+NX.courseForStage = function (c, pool) {
+  const src = pool || NX.state.allCourses;
+  const exact = NX.getCourse(c.code, c.seq);
+  if (exact) return exact;
+  const t = String(c.teacher || '').trim();
+  if (t) {
+    const tm = src.find(x => x.code === c.code && x.teacher &&
+      (x.teacher === t || x.teacher.includes(t) || t.includes(x.teacher)));
+    if (tm) return tm;
+  }
+  const same = src.filter(x => x.code === c.code);
+  return same.length === 1 ? same[0] : undefined;
+};
+
 NX.rebuildCourseMap = function () {
   const m = new Map();
   for (const c of NX.state.allCourses) m.set(c.code + '_' + (c.seq || '0'), c);
@@ -547,6 +564,7 @@ NX.jumpToCourse = function (code, seq) {
   search.value = code;
   state._jumpCode = code;
   state._jumpSeq = seq || '0';
+  state._jumpAutoAll = true;   // 目标缺失且数据不完整时，允许自动补齐一轮（#33）
   state._serverSig = null;   // 强制发新服务端查询（课号 → kch 精确）
   NX.filterCourses();
   NX.scheduleServerSearch(true);   // 跳转立即查（不等防抖）
@@ -559,7 +577,7 @@ NX.stageProbHtml = function (c) {
   const { state, fullProbGrid, baseFlag, getCourse } = NX;
   const { isQueuePhase, queueDataMap, allCourses } = state;
   // 课序精确 → 课号兜底（暂存/课余量/kkxx 两套课序号对不上时概率不该消失）
-  const ac = getCourse(c.code, c.seq) || allCourses.find(x => x.code === c.code);
+  const ac = NX.courseForStage(c);
   if (!ac) return '';
   if (isQueuePhase) {
     const qKey = c.code + '_' + NX.normSeq(c.seq);
@@ -582,7 +600,7 @@ NX.renderStageCart = function () {
   if (!el) return;
   if (!stageCart.length) { el.innerHTML = '<div class="nx-st">暂无暂存课程，点击课程卡片上的「暂存」按钮添加</div>'; $('nextthuxk-stage-conflict').innerHTML = ''; return; }
   el.innerHTML = stageCart.map((c, i) => {
-    const bf = c.baseFlag || (() => { const ac = allCourses.find(x => x.code === c.code); return ac ? baseFlag(ac) : 'rx'; })();
+    const bf = c.baseFlag || (() => { const ac = NX.courseForStage(c); return ac ? baseFlag(ac) : 'rx'; })();
     const aFlags = allowedFlags(bf);
     if (!aFlags.includes(c.flag)) { c.flag = aFlags[0]; store.set('stageCart', stageCart); }
     const flOpts = aFlags.map(f => '<option value="' + f + '"' + (c.flag === f ? ' selected' : '') + '>' + (f === 'bx' ? '必修' : f === 'xx' ? '限选' : f === 'rx' ? '任选' : '体育') + '</option>').join('');
@@ -668,7 +686,7 @@ NX.renderDrafts = function () {
     if (exp && d.courses.length) {
       courseList = '<div class="nx-draft-courses" style="margin-top:6px;border-top:1px solid rgba(0,0,0,.06);padding-top:6px">';
       d.courses.forEach((c, ci) => {
-        const bf = c.baseFlag || (() => { const ac = allCourses.find(x => x.code === c.code); return ac ? baseFlag(ac) : 'rx'; })();
+        const bf = c.baseFlag || (() => { const ac = NX.courseForStage(c); return ac ? baseFlag(ac) : 'rx'; })();
         const aFlags = allowedFlags(bf);
         if (!aFlags.includes(c.flag)) { c.flag = aFlags[0]; store.set('drafts', savedDrafts); }
         const flOpts = aFlags.map(f => '<option value="' + f + '"' + (c.flag === f ? ' selected' : '') + '>' + (f === 'bx' ? '必修' : f === 'xx' ? '限选' : f === 'rx' ? '任选' : '体育') + '</option>').join('');
@@ -1205,6 +1223,7 @@ NX.loadSearchPageTo = async function (target) {
 NX.loadAllSearch = async function () {
   const state = NX.state;
   if (state._loadingAll) return;
+  if (state._ssBusy) { state._loadAllPending = true; return; }   // 管线跑动中：排队而非静默丢弃（#32）
   state._loadingAll = true;
   NX.filterCourses();   // 提示条立即变「加载中…」
   try {
@@ -1221,7 +1240,14 @@ NX.loadAllSearch = async function () {
     state._searchRows = res.rows || [];
     // 同上：补齐页合并进会话池（暂存/详情/选课按钮一致可用）
     if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
-    state._searchIncomplete = false;
+    // #32 定案：补齐后仍 < 服务端总数（翻页请求静默失败等）→ 保留提示可重试，
+    // 绝不假装补齐成功（旧版无条件清 flag = 「点了没效果」的误导来源之一）
+    const stillIncomplete = !!(res.totalRows && (res.rows || []).length < res.totalRows);
+    state._searchIncomplete = stillIncomplete;
+    if (stillIncomplete) {
+      console.warn(NX.TAG, 'load all: 仍不完整', (res.rows || []).length, '/', res.totalRows,
+        '——部分页请求失败，可重试「加载当前关键词全部」');
+    }
     if (res.totalPages) state._searchTotalPages = res.totalPages;
     if (res.totalRows) state._searchTotalRows = res.totalRows;
     state._searchError = res.pageKind === 'unknown' ? '教务返回异常页（已自动重进未果，WebVPN 会话已失效）——请退出 WebVPN 重新登录' : '';
@@ -1229,7 +1255,9 @@ NX.loadAllSearch = async function () {
     console.warn(NX.TAG, 'load all:', e);
   }
   state._loadingAll = false;
+  if (state._searchDeferred) { state._searchDeferred = false; NX.scheduleServerSearch(true); return; }
   NX.filterCourses();
+  NX.highlightJumpTarget();   // 跳转自动补齐路径：补齐后重入高亮（#33）
 };
 
 // 浏览模式跳页：置页码 → 作废指纹 → 重新走查询管线（一次一页）
@@ -1271,6 +1299,7 @@ NX.buildSearchOpts = function () {
 NX.runServerSearch = async function () {
   const state = NX.state;
   if (state._ssBusy) { state._ssPending = true; return; }
+  if (state._loadingAll) { state._searchDeferred = true; return; }   // 补齐中：延后重跑，别把全量结果盖回去
   state._ssBusy = true;
   try {
     for (let guard = 0; guard < 4; guard++) {
@@ -1326,6 +1355,7 @@ NX.runServerSearch = async function () {
     state._ssBusy = false;
   }
   if (state._ssPending) { state._ssPending = false; NX.runServerSearch(); return; }
+  if (state._loadAllPending) { state._loadAllPending = false; NX.loadAllSearch(); return; }   // #32：排队的补齐
   NX.filterCourses();   // sig 未变 → 直接渲染新结果（不再触发查询）
   NX.highlightJumpTarget();
 };
@@ -1342,18 +1372,31 @@ NX.highlightJumpTarget = function () {
   if (!state._jumpCode) return;
   const $ = state.$;
   const code = state._jumpCode, seq = state._jumpSeq || '0';
+  // 目标不在当前结果 → 不消费跳转意图：数据不完整时自动补齐一轮重试（#33）；
+  // 补齐后仍无 → 明确提示。绝不高亮同名第一门充数（正是本 bug 的误导根源）。
+  const target = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])].find(card =>
+    card.dataset.code === String(code) &&
+    String(card.dataset.seq || '0') === String(seq));
+  if (!target) {
+    if (state._searchIncomplete && !state._loadingAll && state._jumpAutoAll) {
+      state._jumpAutoAll = false;
+      void NX.loadAllSearch();   // 补齐后 filterCourses → 本函数重入（_jumpCode 仍在）
+      return;
+    }
+    state._jumpCode = null;
+    const list = $('nextthuxk-list');
+    if (list && state._searchIncomplete) {
+      list.insertAdjacentHTML('afterbegin',
+        '<div class="nx-st" style="padding:6px 0;font-size:11px;color:#b8860b;text-align:center">未在结果中找到 ' +
+        String(code) + '-' + String(seq || '0') + '（结果不完整——可点「加载当前关键词全部」后重试）</div>');
+    }
+    return;
+  }
   state._jumpCode = null;
   requestAnimationFrame(() => {
-    const list = $('nextthuxk-list');
-    if (!list) return;
-    const target = [...list.querySelectorAll('.nx-card')].find(card =>
-      card.dataset.code === String(code) &&
-      String(card.dataset.seq || '0') === String(seq));
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.classList.add('nx-jump-target');
-      setTimeout(() => target.classList.remove('nx-jump-target'), 1800);
-    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('nx-jump-target');
+    setTimeout(() => target.classList.remove('nx-jump-target'), 1800);
   });
 };
 
