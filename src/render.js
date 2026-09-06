@@ -176,6 +176,17 @@ NX.getCourse = function (code, seq) {
 // 或「该课号池内唯一」——绝不吃同名第一门（数据不完整池里第一门常是别的老师的课，
 // 概率/余量错标误导极强：用户实测王洪川 100% 被错标成刘烨 9%）。
 NX.courseForStage = function (c, pool) {
+  const r = NX._courseForStageCore(c, pool);
+  try {
+    const src2 = pool || NX.state.allCourses;
+    console.log(NX.TAG, '[NX-33] 决策', c.code + '_' + (c.seq || '0'),
+      '师=[' + (c.teacher || '') + '] 时=[' + String(c.time || '').slice(0, 16) + ']',
+      '→', r ? ('第' + (r.seq || '?') + '课序 师=[' + (r.teacher || '') + ']') : '缺省',
+      '| 池内同号 ' + src2.filter(x => x.code === c.code).length + ' 行');
+  } catch (e) {}
+  return r;
+};
+NX._courseForStageCore = function (c, pool) {
   const src = pool || NX.state.allCourses;
   const same = src.filter(x => x.code === c.code);
   if (!same.length) return undefined;
@@ -1458,6 +1469,13 @@ NX.highlightJumpTarget = function () {
   let idx = list.findIndex(c => codeSeq(c) && tOk(c) && timeOk(c));
   if (idx === -1) idx = list.findIndex(c => codeSeq(c) && tOk(c));
   if (idx === -1) idx = list.findIndex(codeSeq);
+  try {
+    console.log(NX.TAG, '[NX-33] 跳转', code + '_' + seq,
+      '师=[' + (state._jumpTeacher || '') + '] 时=[' + (state._jumpTime || '').slice(0, 16) + ']',
+      '→', idx >= 0
+        ? ('第' + (list[idx].seq || '?') + '课序 师=[' + (list[idx].teacher || '') + '] 时=[' + String(list[idx].time || '').slice(0, 16) + ']')
+        : '未命中(列表 ' + list.length + ' 行)');
+  } catch (e) {}
   if (idx === -1) {
     // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
     // 不弹提示不闪 banner；爬完仍无（课序真不在教务）才静默放弃
