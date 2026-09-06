@@ -1547,6 +1547,9 @@ NX.mergeServerRows = function (rows) {
             NX.applyVolunteer(targets, state.volMap);
             NX.filterCourses();
             try { NX.renderStageCart(); } catch (e) {}   // 暂存条概率跟志愿数据一起到（一会有一会没的根因）
+            // 整表重渲会把跳转定位冲掉（innerHTML 重建 → scrollTop 归零、
+            // 高亮丢失，「滚到卡片又弹回结果顶端」实锤）——按最近跳转恢复
+            try { if (NX.reapplyJumpIfFresh) NX.reapplyJumpIfFresh(); } catch (e) {}
           } catch (e) {
             console.warn(NX.TAG, 'volunteer 按需补拉失败:', newDepts.join(','), e);
           }

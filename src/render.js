@@ -1335,26 +1335,102 @@ NX.scheduleServerSearch = function (immediate) {
   NX._ssTimer = setTimeout(() => { NX._ssTimer = null; NX.runServerSearch(); }, immediate ? 0 : 500);
 };
 
+/** 跳转目标卡片查找：课序号精确 → 归一化（normSeq——预览/已选/暂存行与
+ *  kkxx 搜索行是两套课序号，"01"/"1" 严格比对必 miss）→ 课号唯一行兜底。 */
+NX.findJumpCard = function (list, code, seq) {
+  const codeS = String(code);
+  const seqS = String(seq || '0');
+  const cards = [...list.querySelectorAll('.nx-card')].filter(c => c.dataset.code === codeS);
+  return cards.find(c => String(c.dataset.seq || '0') === seqS)
+    || cards.find(c => NX.normSeq(c.dataset.seq || '0') === NX.normSeq(seqS))
+    || (cards.length === 1 ? cards[0] : null);
+};
+
+NX.flashJumpCard = function (target) {
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('nx-jump-target');
+  setTimeout(() => target.classList.remove('nx-jump-target'), 1800);
+};
+
 /** 跳转目标高亮（OneTHU jumpTo 定稿语义：课号注入搜索栏并保持，
- *  高亮 1.8s 瞬时清除；无自动清词） */
+ *  高亮 1.8s 瞬时清除；无自动清词）。
+ *  「只到结果顶端、不到课序号」三连修：
+ *  ① 课序号匹配 精确→归一→课号唯一兜底（两套课序号对不上时严格比对全 miss）；
+ *  ② 目标行在本地分页其他页（课号下 >20 课序）→ 自动翻到所在页再找；
+ *  ③ 记 _lastJump，跳转后短期内的异步重渲由 reapplyJumpIfFresh 恢复定位。 */
 NX.highlightJumpTarget = function () {
   const state = NX.state;
   if (!state._jumpCode) return;
-  const $ = state.$;
   const code = state._jumpCode, seq = state._jumpSeq || '0';
   state._jumpCode = null;
+  state._lastJump = { code, seq, at: Date.now() };
   requestAnimationFrame(() => {
-    const list = $('nextthuxk-list');
+    const list = state.$('nextthuxk-list');
     if (!list) return;
-    const target = [...list.querySelectorAll('.nx-card')].find(card =>
-      card.dataset.code === String(code) &&
-      String(card.dataset.seq || '0') === String(seq));
+    let target = NX.findJumpCard(list, code, seq);
+    if (!target && state._searchRows && state._searchRows.length) {
+      const idx = state._searchRows.findIndex(r => String(r.code) === String(code)
+        && NX.normSeq(r.seq || '0') === NX.normSeq(seq));
+      if (idx >= 0) {
+        const page = Math.floor(idx / NX.PAGE_SIZE) + 1;
+        if (page !== (state._uiPage || 1)) {
+          state._uiPage = page;   // serverSig 不含 _uiPage：只本地翻页，不发新请求
+          try { NX.filterCourses(); } catch (e) {}
+          target = NX.findJumpCard(list, code, seq);
+        }
+      }
+    }
     if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.classList.add('nx-jump-target');
-      setTimeout(() => target.classList.remove('nx-jump-target'), 1800);
+      NX.flashJumpCard(target);
+    } else {
+      // 目标行连搜索结果里都没有：精确课号查询 storm 护栏只探第 1 页，
+      // 课序号在第 2 页起（>20 课序的课）——补拉该课号其余页后重试定位
+      NX.fetchJumpRestPages(code, seq);
     }
   });
+};
+
+/** 精确课号跳转的补页：目标课序不在已加载页（课号 >20 课序跨页）时，拉齐该
+ *  课号其余页再定位。护栏：页 1 必须全部属于该课号（教务忽略 p_kch 时返回
+ *  未过滤首页，此时补页等于全库爬，直接放弃）；最多补到第 5 页。 */
+NX.fetchJumpRestPages = async function (code, seq) {
+  const state = NX.state;
+  try {
+    const so = NX.buildSearchOpts();
+    if (!so.kch || so.kch !== String(code)) return;
+    const rows = state._searchRows || [];
+    if (!rows.length || !rows.every(r => String(r.code) === String(code))) return;
+    const totalPages = Math.min(state._searchTotalPages || 1, 5);
+    const loaded = Math.ceil(rows.length / NX.PAGE_SIZE);
+    if (totalPages <= loaded) return;
+    await NX.loadSearchPageTo(totalPages);
+    const list = state.$('nextthuxk-list');
+    if (!list) return;
+    let target = NX.findJumpCard(list, code, seq);
+    if (!target) {
+      const idx = (state._searchRows || []).findIndex(r => String(r.code) === String(code)
+        && NX.normSeq(r.seq || '0') === NX.normSeq(seq));
+      if (idx >= 0) {
+        state._uiPage = Math.floor(idx / NX.PAGE_SIZE) + 1;
+        NX.filterCourses();
+        target = NX.findJumpCard(list, code, seq);
+      }
+    }
+    if (target) NX.flashJumpCard(target);
+  } catch (e) { console.warn(NX.TAG, 'jump 补页:', e); }
+};
+
+/** 跳转后 6s 内列表若被异步重渲（mergeServerRows 志愿补拉回填等会整表
+ *  filterCourses 重建 DOM——innerHTML 清空使 scrollTop 归零、高亮块一并
+ *  被冲掉，「已滚到卡片又弹回顶端」实锤），按 _lastJump 重定位恢复。 */
+NX.reapplyJumpIfFresh = function () {
+  const state = NX.state;
+  const lj = state._lastJump;
+  if (!lj || Date.now() - lj.at > 6000) return;
+  const list = state.$ && state.$('nextthuxk-list');
+  if (!list) return;
+  const target = NX.findJumpCard(list, lj.code, lj.seq);
+  if (target) NX.flashJumpCard(target);
 };
 
 NX.updateSearchClear = function () {

@@ -137,6 +137,7 @@ var NX = NX || {};
       if (NX.state && Array.isArray(NX.state.allCourses) && NX.state.allCourses.length && typeof NX.tbAttach === 'function') {
         NX.tbAttach(NX.state.allCourses);
         if (typeof NX.filterCourses === 'function') NX.filterCourses();   // 重绘徽章（fail-soft）
+        if (typeof NX.reapplyJumpIfFresh === 'function') NX.reapplyJumpIfFresh();   // 重渲后恢复跳转定位
       }
     } catch (e) {}
   }
