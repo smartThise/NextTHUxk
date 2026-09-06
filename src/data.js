@@ -1375,7 +1375,10 @@ NX.serverSearchStorm = async function (opts) {
   // 大多是宽泛词）；tp 解析失败保守探 25 页。forceAll=「加载全部」按钮 →
   // 显式全量补齐（用户主动点击，OneTHU loadAllSearch 同款）。
   // 绝不做课号深页探测（教务返回无过滤首页 + 25 连发打满代理 token 双雷）。
-  const probeTo = exactCode ? 1 : (o.forceAll ? (tp > 0 ? tp : 25) : (tp > 0 ? (tp <= 25 ? tp : 5) : 25));
+  // forceAll（「加载全部」按钮 / 跳转静默爬全量）压过课号护栏——旧版 exactCode ? 1
+  // 恒最先命中，课号检索永远只探首页（#32「点了没效果」真根因）。课号检索页数少
+  // （同一课号 ≤ 数页），压力可控（用户定案）。深页结果仍经下方课号前缀过滤兜底。
+  const probeTo = o.forceAll ? (tp > 0 ? tp : 25) : (exactCode ? 1 : (tp > 0 ? (tp <= 25 ? tp : 5) : 25));
   if (probeTo > 1) {
     const merged = {};
     rows.forEach(r => { merged[r.code + '_' + (r.seq || '0')] = r; });
@@ -1386,6 +1389,8 @@ NX.serverSearchStorm = async function (opts) {
       try {
         const r = await serverSearch({ ...o, page: p });
         (r.rows || []).forEach(row => {
+          // 课号检索深页护栏：教务若忽略筛选返回未过滤行，只收课号前缀命中的
+          if (exactCode && !String(row.code || '').startsWith((o.kch || '').trim())) return;
           const k = row.code + '_' + (row.seq || '0');
           if (!merged[k]) { merged[k] = row; rows.push(row); }
         });
