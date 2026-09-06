@@ -648,6 +648,54 @@ NX.renderStageCart = function () {
       ).join('');
     } else cf.innerHTML = '<div style="font-size:11px;color:#07c160">✓ 无时间冲突</div>';
   }
+  NX.scheduleProbBackfill();
+};
+
+// ─── 暂存/草稿概率自动回填（#33 跟进：概率不再要用户点一下才出现）──────────
+// 池里查不到的暂存/草稿课 → 按课号静默爬全量合并进池（同课号页数少，压力小，
+// 用户定案）；每课号每会话 2 次封顶；与查询管线互斥（跑动中延后，防把全量盖回去）。
+NX.scheduleProbBackfill = function () {
+  clearTimeout(NX._probBfTimer);
+  NX._probBfTimer = setTimeout(() => { NX._probBfTimer = null; NX.backfillStageProbs().catch(e => console.warn(NX.TAG, 'prob backfill:', e)); }, 700);
+};
+NX.backfillStageProbs = async function () {
+  const state = NX.state;
+  if (state.isQueuePhase) return;   // 排队阶段概率来自 queueDataMap，不吃池
+  if (state._loadingAll || state._ssBusy) {
+    state._probBfDeferred = (state._probBfDeferred || 0) + 1;
+    if (state._probBfDeferred < 20) NX.scheduleProbBackfill();
+    return;
+  }
+  state._probBfDeferred = 0;
+  const tried = state._probBfTried || (state._probBfTried = new Map());
+  const items = [];
+  (state.stageCart || []).forEach(c => { if (!c.manual) items.push(c); });
+  (state.savedDrafts || []).forEach(d => (d.courses || []).forEach(c => { if (!c.manual) items.push(c); }));
+  const seen = new Set();
+  const need = [];
+  for (const c of items) {
+    if (seen.has(c.code)) continue;
+    seen.add(c.code);
+    if (NX.courseForStage(c)) continue;           // 池里已有（精确/教师/唯一兜底命中）
+    if ((tried.get(c.code) || 0) >= 2) continue;  // 两次封顶（失败多为会话问题，不刷屏）
+    need.push(c.code);
+  }
+  if (!need.length) return;
+  need.forEach(cd => tried.set(cd, (tried.get(cd) || 0) + 1));
+  for (const cd of need) {
+    try {
+      const res = await NX.serverSearchStorm({ kch: cd, forceAll: true });
+      const rows = res.rows || [];
+      if (rows.length && NX.mergeServerRows(rows)) NX.rebuildCourseMap();
+    } catch (e) { console.warn(NX.TAG, 'prob backfill crawl', cd, e); }
+  }
+  NX.renderStageCart();
+  NX.renderDrafts();
+  if (state.previewMode === 'stage' || state.previewMode === 'draft') {
+    try { NX.invalidatePreview(); NX.renderPreviewTT(NX.getPreviewCourses(), (state.$('nextthuxk-preview-info') || {}).textContent || ''); } catch (e) {}
+  }
+  // 仍有缺口（多个课号分轮补）→ 续跑
+  if (items.some(c => !c.manual && !NX.courseForStage(c) && (tried.get(c.code) || 0) < 2)) NX.scheduleProbBackfill();
 };
 
 // ─── Drafts Rendering ─────────────────────────────────────────
@@ -770,7 +818,8 @@ NX.renderDrafts = function () {
       if (d) exportDraft(d);
     };
   });
-};
+  NX.scheduleProbBackfill();
+  };
 
 // ─── Course Detail Modal ──────────────────────────────────────
 
@@ -1375,10 +1424,11 @@ NX.highlightJumpTarget = function () {
   const code = state._jumpCode, seq = state._jumpSeq || '0';
   // 目标不在当前结果 → 不消费跳转意图：数据不完整时自动补齐一轮重试（#33）；
   // 补齐后仍无 → 明确提示。绝不高亮同名第一门充数（正是本 bug 的误导根源）。
-  const target = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])].find(card =>
-    card.dataset.code === String(code) &&
-    String(card.dataset.seq || '0') === String(seq));
-  if (!target) {
+  // 数据定位（渐进渲染：DOM 只渲到 renderCursor，按索引强制渲到目标条再滚）
+  const list = state.renderList || [];
+  const idx = list.findIndex(c => String(c.code || '') === String(code) &&
+    String(c.seq || '0') === String(seq));
+  if (idx === -1) {
     // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
     // 不弹提示不闪 banner；爬完仍无（课序真不在教务）才静默放弃
     if (state._searchIncomplete && !state._loadingAll && state._jumpAutoAll) {
@@ -1391,10 +1441,15 @@ NX.highlightJumpTarget = function () {
     return;
   }
   state._jumpCode = null;
+  let guard = 0;
+  while (state.renderList === list && state.renderCursor <= idx && guard++ < 300) NX.renderMoreCourses();
   requestAnimationFrame(() => {
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    target.classList.add('nx-jump-target');
-    setTimeout(() => target.classList.remove('nx-jump-target'), 1800);
+    const card = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])].find(c =>
+      c.dataset.code === String(code) && String(c.dataset.seq || '0') === String(seq));
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('nx-jump-target');
+    setTimeout(() => card.classList.remove('nx-jump-target'), 1800);
   });
 };
 
