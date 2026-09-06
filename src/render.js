@@ -177,15 +177,22 @@ NX.getCourse = function (code, seq) {
 // 概率/余量错标误导极强：用户实测王洪川 100% 被错标成刘烨 9%）。
 NX.courseForStage = function (c, pool) {
   const src = pool || NX.state.allCourses;
-  const exact = NX.getCourse(c.code, c.seq);
-  if (exact) return exact;
   const t = String(c.teacher || '').trim();
+  const tOk = x => !t || (!!x.teacher &&
+    (x.teacher === t || x.teacher.includes(t) || t.includes(x.teacher)));
+  const same = src.filter(x => x.code === c.code);
+  // ① 课序精确且教师不矛盾
+  const exact = same.find(x => String(x.seq || '0') === String(c.seq || '0'));
+  if (exact && tOk(exact)) return exact;
+  // ② 教师一致（课序两套编号对不上是本系统文档在案的老毛病——教师才是真身份，
+  //    实测：暂存王洪川 100% 被课序精确命中成刘烨 9%）
   if (t) {
-    const tm = src.find(x => x.code === c.code && x.teacher &&
+    const tm = same.find(x => x.teacher &&
       (x.teacher === t || x.teacher.includes(t) || t.includes(x.teacher)));
     if (tm) return tm;
   }
-  const same = src.filter(x => x.code === c.code);
+  // ③ 无教师信息才裸信课序；有教师但没命中 → 课序命中不可靠，唯一才用
+  if (!t && exact) return exact;
   return same.length === 1 ? same[0] : undefined;
 };
 
@@ -541,7 +548,7 @@ NX.renderPreviewTT = function (courses, label) {
 // 跳转语义（OneTHU jumpTo 定稿）：课号注入搜索栏并保持（无自动清词），
 // 重置筛选 → 服务端按课号精确搜索 → 结果渲染后高亮目标卡片 1.8s。
 // 随时查询版：不再依赖本地 courseMap（核心池只有已选/候补）。
-NX.jumpToCourse = function (code, seq) {
+NX.jumpToCourse = function (code, seq, teacher) {
   const { state } = NX;
   const $ = state.$;
   const search = $('nextthuxk-search');
@@ -564,6 +571,7 @@ NX.jumpToCourse = function (code, seq) {
   search.value = code;
   state._jumpCode = code;
   state._jumpSeq = seq || '0';
+  state._jumpTeacher = String(teacher || '').trim();
   state._jumpAutoAll = true;   // 目标缺失且数据不完整时，允许自动补齐一轮（#33）
   state._serverSig = null;   // 强制发新服务端查询（课号 → kch 精确）
   NX.filterCourses();
@@ -1424,10 +1432,16 @@ NX.highlightJumpTarget = function () {
   const code = state._jumpCode, seq = state._jumpSeq || '0';
   // 目标不在当前结果 → 不消费跳转意图：数据不完整时自动补齐一轮重试（#33）；
   // 补齐后仍无 → 明确提示。绝不高亮同名第一门充数（正是本 bug 的误导根源）。
-  // 数据定位（渐进渲染：DOM 只渲到 renderCursor，按索引强制渲到目标条再滚）
+  // 数据定位（渐进渲染：DOM 只渲到 renderCursor，按索引强制渲到目标条再滚）；
+  // 教师仲裁：同课号同课序多教师（课序骗人实锤）→ 定位到对的人
   const list = state.renderList || [];
-  const idx = list.findIndex(c => String(c.code || '') === String(code) &&
-    String(c.seq || '0') === String(seq));
+  const jt = state._jumpTeacher || '';
+  const codeSeq = c => String(c.code || '') === String(code) &&
+    String(c.seq || '0') === String(seq);
+  const tOk = c => !jt || (!!c.teacher &&
+    (c.teacher === jt || c.teacher.includes(jt) || jt.includes(c.teacher)));
+  let idx = list.findIndex(c => codeSeq(c) && tOk(c));
+  if (idx === -1) idx = list.findIndex(codeSeq);
   if (idx === -1) {
     // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
     // 不弹提示不闪 banner；爬完仍无（课序真不在教务）才静默放弃
@@ -1444,8 +1458,10 @@ NX.highlightJumpTarget = function () {
   let guard = 0;
   while (state.renderList === list && state.renderCursor <= idx && guard++ < 300) NX.renderMoreCourses();
   requestAnimationFrame(() => {
-    const card = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])].find(c =>
-      c.dataset.code === String(code) && String(c.dataset.seq || '0') === String(seq));
+    const cards = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])];
+    const card = cards.find(c => c.dataset.code === String(code) &&
+      String(c.dataset.seq || '0') === String(seq) && tOk({ teacher: c.dataset.teacher || '' })) ||
+      cards.find(c => c.dataset.code === String(code) && String(c.dataset.seq || '0') === String(seq));
     if (!card) return;
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card.classList.add('nx-jump-target');
