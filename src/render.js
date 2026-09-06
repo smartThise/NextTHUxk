@@ -177,22 +177,32 @@ NX.getCourse = function (code, seq) {
 // 概率/余量错标误导极强：用户实测王洪川 100% 被错标成刘烨 9%）。
 NX.courseForStage = function (c, pool) {
   const src = pool || NX.state.allCourses;
+  const same = src.filter(x => x.code === c.code);
+  if (!same.length) return undefined;
   const t = String(c.teacher || '').trim();
+  const seq = String(c.seq || '0');
+  const tm2 = s => String(s || '').replace(/\s+/g, '');
+  const time = tm2(c.time || '');
+  // 空时间不否证（回填前 time 可能还没解析出来）
   const tOk = x => !t || (!!x.teacher &&
     (x.teacher === t || x.teacher.includes(t) || t.includes(x.teacher)));
-  const same = src.filter(x => x.code === c.code);
-  // ① 课序精确且教师不矛盾
-  const exact = same.find(x => String(x.seq || '0') === String(c.seq || '0'));
-  if (exact && tOk(exact)) return exact;
-  // ② 教师一致（课序两套编号对不上是本系统文档在案的老毛病——教师才是真身份，
-  //    实测：暂存王洪川 100% 被课序精确命中成刘烨 9%）
-  if (t) {
-    const tm = same.find(x => x.teacher &&
-      (x.teacher === t || x.teacher.includes(t) || t.includes(x.teacher)));
-    if (tm) return tm;
+  const seqOk = x => String(x.seq || '0') === seq;
+  const timeOk = x => !time || !tm2(x.time) ||
+    tm2(x.time).includes(time) || time.includes(tm2(x.time));
+  // ① 全信号一致：课序+教师（+时间不矛盾）
+  const full = same.find(x => seqOk(x) && tOk(x) && timeOk(x));
+  if (full) return full;
+  // ② 教师唯一 → 直接认（课序两套编号对不上是本系统老毛病，教师才是真身份）
+  const tHits = t ? same.filter(tOk) : [];
+  if (tHits.length === 1) return tHits[0];
+  // ③ 同师多课（同课号两三门，用户问的就是这个）→ 时间消歧 → 课序仲裁；
+  //    都分不出 → 诚实缺省，绝不冒认（宁可没概率，不显示别人的）
+  if (tHits.length > 1) {
+    return tHits.find(timeOk) || tHits.find(seqOk) || undefined;
   }
-  // ③ 无教师信息才裸信课序；有教师但没命中 → 课序命中不可靠，唯一才用
-  if (!t && exact) return exact;
+  // ④ 无教师信息：裸信课序
+  if (!t) { const exact = same.find(seqOk); if (exact) return exact; }
+  // ⑤ 唯一同课号才兜
   return same.length === 1 ? same[0] : undefined;
 };
 
@@ -388,7 +398,7 @@ NX.renderPreviewTT = function (courses, label) {
     const mk = (day, begin, end, tag) => ({
       key: (c.code || 'm') + '_' + (c.seq || '0') + '_' + tag, day, begin, end,
       label: lbl, color: cellColor, probLabel, probBgColor,
-      manual: !!c.manual, id: c.id, code: c.code, seq: c.seq || '0', teacher: c.teacher || '',
+      manual: !!c.manual, id: c.id, code: c.code, seq: c.seq || '0', teacher: c.teacher || '', time: c.time || '',
       origin: NX.originOf(c.code), tag,
     });
     let n = 0;
@@ -480,7 +490,7 @@ NX.renderPreviewTT = function (courses, label) {
       const tagHtml = '<span class="nx-tta-tag">' + hm(b.begin) + '-' + hm(b.end) + '</span>';
       const probHtml = b.probLabel ? '<span class="nx-tt-prob" style="background:' + b.probBgColor + ';color:' + b.color + '">' + b.probLabel + '</span>' : '';
       return '<div class="nx-tta-b' + (b.manual ? ' nx-tt-manual' : ' nx-tt-jump') + '" style="top:' + top + 'px;height:' + hgt + 'px;left:calc(' + (ln.lane * 100 / ln.lanes) + '% + 1px);width:calc(' + (100 / ln.lanes) + '% - 2px);background:' + bg + ';border-left:3px solid ' + bc + '"' +
-        (b.manual ? ' data-manual-id="' + esc(b.id) + '"' : ' data-code="' + esc(b.code) + '" data-seq="' + esc(b.seq) + '" data-teacher="' + esc(b.teacher || '') + '"') +
+        (b.manual ? ' data-manual-id="' + esc(b.id) + '"' : ' data-code="' + esc(b.code) + '" data-seq="' + esc(b.seq) + '" data-teacher="' + esc(b.teacher || '') + '" data-time="' + esc(b.time || '') + '"') +
         ' title="' + esc(b.label + (b.tag ? ' · ' + b.tag : '')) + '">' +
         '<div class="nx-tta-l">' + originHtml + esc(b.label) + probHtml + tagHtml + '</div>' +
         '<span class="nx-tta-x" title="移除">✕</span></div>';
@@ -523,7 +533,7 @@ NX.renderPreviewTT = function (courses, label) {
     };
   });
   el.querySelectorAll('.nx-tta-b.nx-tt-jump').forEach(bEl => {
-    bEl.onclick = () => NX.jumpToCourse(bEl.dataset.code, bEl.dataset.seq, bEl.dataset.teacher);
+    bEl.onclick = () => NX.jumpToCourse(bEl.dataset.code, bEl.dataset.seq, bEl.dataset.teacher, bEl.dataset.time);
   });
   const retryBtn = el.querySelector('#nx-undet-retry');
   if (retryBtn) retryBtn.onclick = () => {
@@ -548,7 +558,7 @@ NX.renderPreviewTT = function (courses, label) {
 // 跳转语义（OneTHU jumpTo 定稿）：课号注入搜索栏并保持（无自动清词），
 // 重置筛选 → 服务端按课号精确搜索 → 结果渲染后高亮目标卡片 1.8s。
 // 随时查询版：不再依赖本地 courseMap（核心池只有已选/候补）。
-NX.jumpToCourse = function (code, seq, teacher) {
+NX.jumpToCourse = function (code, seq, teacher, time) {
   const { state } = NX;
   const $ = state.$;
   const search = $('nextthuxk-search');
@@ -572,6 +582,7 @@ NX.jumpToCourse = function (code, seq, teacher) {
   state._jumpCode = code;
   state._jumpSeq = seq || '0';
   state._jumpTeacher = String(teacher || '').trim();
+  state._jumpTime = String(time || '').trim();
   state._jumpAutoAll = true;   // 目标缺失且数据不完整时，允许自动补齐一轮（#33）
   state._serverSig = null;   // 强制发新服务端查询（课号 → kch 精确）
   NX.filterCourses();
@@ -616,7 +627,7 @@ NX.renderStageCart = function () {
     const prob = NX.stageProbHtml(c);
     return '<div class="nx-stage-item" style="flex-direction:column;align-items:stretch;gap:2px">' +
       '<div style="display:flex;align-items:center;gap:4px">' +
-      '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" title="点击按课号搜索此课程" style="min-width:80px;cursor:pointer">' + esc(c.name) + (c.teacher ? ' <span style="color:#9aa1ac;font-weight:400">' + esc(c.teacher) + '</span>' : '') + '</span>' +
+      '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" data-time="' + esc(c.time || '') + '" title="点击按课号搜索此课程" style="min-width:80px;cursor:pointer">' + esc(c.name) + (c.teacher ? ' <span style="color:#9aa1ac;font-weight:400">' + esc(c.teacher) + '</span>' : '') + '</span>' +
       '<span class="nx-stage-info">' + c.credits + '学分</span>' +
       '<select class="nx-stage-flag-sel" data-idx="' + i + '" style="padding:2px 4px;border-radius:6px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + flOpts + '</select>' +
       '<select class="nx-stage-zy-sel" data-idx="' + i + '" style="padding:2px 4px;border-radius:6px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + zyOpts + '</select>' +
@@ -624,7 +635,7 @@ NX.renderStageCart = function () {
   }).join('');
   // 暂存课名点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
-    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher); };
+    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher, item.dataset.time); };
   });
   el.querySelectorAll('.nx-stage-flag-sel').forEach(sel => {
     sel.onchange = () => {
@@ -749,7 +760,7 @@ NX.renderDrafts = function () {
         const zyOpts = [1, 2, 3].map(z => '<option value="' + z + '"' + (c.zy === z ? ' selected' : '') + '>' + z + '志愿</option>').join('');
         const prob = NX.draftCourseProbHtml(c);
         courseList += '<div style="display:flex;align-items:center;gap:4px;padding:3px 0;font-size:11px;border-bottom:1px solid rgba(0,0,0,.03)">' +
-          '<span class="nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" title="点击按课号搜索此课程" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#1f2329;cursor:pointer">' + esc(c.name) + '</span>' +
+          '<span class="nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" data-time="' + esc(c.time || '') + '" title="点击按课号搜索此课程" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#1f2329;cursor:pointer">' + esc(c.name) + '</span>' +
           '<span style="font-size:10px;color:#9aa1ac">' + c.credits + '学分</span>' +
           '<select class="nx-draft-flag" data-di="' + di + '" data-ci="' + ci + '" style="padding:1px 3px;border-radius:5px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + flOpts + '</select>' +
           '<select class="nx-draft-zy" data-di="' + di + '" data-ci="' + ci + '" style="padding:1px 3px;border-radius:5px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + zyOpts + '</select>' +
@@ -770,7 +781,7 @@ NX.renderDrafts = function () {
   });
   // 草稿课名点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
-    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher); };
+    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher, item.dataset.time); };
   });
   el.querySelectorAll('.nx-draft-flag').forEach(sel => {
     sel.onchange = () => {
@@ -1440,7 +1451,12 @@ NX.highlightJumpTarget = function () {
     String(c.seq || '0') === String(seq);
   const tOk = c => !jt || (!!c.teacher &&
     (c.teacher === jt || c.teacher.includes(jt) || jt.includes(c.teacher)));
-  let idx = list.findIndex(c => codeSeq(c) && tOk(c));
+  const time = state._jumpTime || '';
+  const tm2 = s2 => String(s2 || '').replace(/\s+/g, '');
+  const timeOk = c => !time || !tm2(c.time) ||
+    tm2(c.time).includes(time) || time.includes(tm2(c.time));
+  let idx = list.findIndex(c => codeSeq(c) && tOk(c) && timeOk(c));
+  if (idx === -1) idx = list.findIndex(c => codeSeq(c) && tOk(c));
   if (idx === -1) idx = list.findIndex(codeSeq);
   if (idx === -1) {
     // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
