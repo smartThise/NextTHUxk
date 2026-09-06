@@ -1010,6 +1010,18 @@ NX.renderPlan = function (plan) {
 // 启动绝不整库预爬（原版 320 页目录 + 220 页志愿 ≈ 500+ 请求已删）：
 // 搜索一律服务器 kkxxSearch 随时查（GBK+风暴护栏）；已选/我的队列走本地
 // 核心池；浏览模式（空关键词）一页一请求翻页，绝不连发。
+/** 服务器查询条件指纹（filterCourses 与全量守卫共用——同指纹才允许互相
+ *  覆盖搜索结果；#33 实锤：loadAll 112 行全量被同查询的首页搜索降级回 20 行） */
+NX.serverSigOf = function () {
+  const state = NX.state, $ = state.$;
+  return JSON.stringify([
+    ($('nextthuxk-search')?.value || '').trim(), state.SEM, state._browsePage || 1,
+    $('nx-filter-tongshi')?.value || '', $('nx-filter-feature')?.value || '',
+    $('nx-filter-grade-filter')?.value || '', $('nx-filter-bksrem')?.value || '',
+    $('nx-filter-yjsrem')?.value || '', $('nx-filter-day')?.value || '',
+    $('nx-filter-period')?.value || '',
+  ]);
+};
 NX.filterCourses = function () {
   const { state, renderCourses, renderPlanView, lc, esc } = NX;
   const $ = state.$;
@@ -1024,13 +1036,7 @@ NX.filterCourses = function () {
   //    注意 f（chip）不入指纹：必修/限选/体育/可选/已选/队列全是本地过滤
   //    （教务无对应参数），chip 切换即时生效不重查（v1.5.0 语义）。
   //    conflict/credits/reviews/sort/xknote 同样只本地细化。
-  const serverSig = JSON.stringify([
-    rawQ.trim(), state.SEM, state._browsePage || 1,
-    $('nx-filter-tongshi')?.value || '', $('nx-filter-feature')?.value || '',
-    $('nx-filter-grade-filter')?.value || '', $('nx-filter-bksrem')?.value || '',
-    $('nx-filter-yjsrem')?.value || '', $('nx-filter-day')?.value || '',
-    $('nx-filter-period')?.value || '',
-  ]);
+  const serverSig = NX.serverSigOf();
   const sigChanged = serverSig !== state._serverSig;
   state._serverSig = serverSig;
   // 必修/限选/体育也是本地池过滤（用户二十二报：v1.5.0 语义——chip 过滤
@@ -1058,6 +1064,7 @@ NX.filterCourses = function () {
     // —— 服务器随时查询路径：条件变了 → 调度查询 + 查询中提示（旧条件结果作废）
     if (sigChanged) {
       state._searchRows = null;
+      state._searchRowsFull = false;   // 换查询：旧全量标记作废
       state._uiPage = 1;   // 新查询回第 1 页（OneTHU searchRunId 同款）
       NX.scheduleServerSearch();
       const listEl = $('nextthuxk-list');
@@ -1306,6 +1313,7 @@ NX.loadAllSearch = async function () {
   if (state._loadingAll) return;
   if (state._ssBusy) { state._loadAllPending = true; return; }   // 管线跑动中：排队而非静默丢弃（#32）
   state._loadingAll = true;
+  state._searchRowsFull = false;
   NX.filterCourses();   // 提示条立即变「加载中…」
   try {
     const opts = NX.buildSearchOpts();
@@ -1319,6 +1327,8 @@ NX.loadAllSearch = async function () {
       r.isCandidate = candKeys.has(k);
     });
     state._searchRows = res.rows || [];
+    state._searchRowsFull = true;                       // 全量标记（同签名浅层搜索不得降级回写）
+    state._searchRowsFullTag = NX.serverSigOf();
     // 同上：补齐页合并进会话池（暂存/详情/选课按钮一致可用）
     if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
     // #32 定案：补齐后仍 < 服务端总数（翻页请求静默失败等）→ 保留提示可重试，
@@ -1337,7 +1347,15 @@ NX.loadAllSearch = async function () {
   }
   state._loadingAll = false;
   state._jumpCrawling = false;
-  if (state._searchDeferred) { state._searchDeferred = false; NX.scheduleServerSearch(true); return; }
+  if (state._searchDeferred) {
+    state._searchDeferred = false;
+    // 查询未变：全量行就是答案 → 直接渲染+高亮。旧逻辑无条件重跑首页搜索，
+    // 把刚补齐的 112 行降级回 20 行，跳转高亮永远丢目标（#33 实锤主路径）
+    if (!(state._searchRowsFull && NX.serverSigOf() === state._searchRowsFullTag)) {
+      NX.scheduleServerSearch(true);
+      return;
+    }
+  }
   NX.filterCourses();
   NX.highlightJumpTarget();   // 跳转自动补齐路径：补齐后重入高亮（#33）
 };
@@ -1411,20 +1429,30 @@ NX.runServerSearch = async function () {
           r.selected = selKeys.has(k);
           r.isCandidate = candKeys.has(k);
         });
-        state._searchRows = res.rows || [];
-        state._browseHasMore = res.pageKind === 'ok' && (res.rows || []).length > 0;
-        // 搜索结果合并进会话池（暂存/简介/选课按钮即刻可用——否则 addToStage
-        // 的 allCourses.find 落空，搜索卡片点暂存静默无效；code_seq 去重，
-        // 池内已有行跳过，已选/队列 chip 按 selected/isCandidate 过滤不受污染）
-        if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
-        state._searchTotalPages = res.totalPages || 0;
-        state._searchTotalRows = res.totalRows || 0;
-        // 捕捉不完整（OneTHU 同款）：已加载 < 服务端总数 → 尾部页未探测，
-        // 分页条出「加载全部」补齐入口
-        state._searchIncomplete = queryMode && !!(res.totalRows && (res.rows || []).length < res.totalRows);
-        state._searchError = res.pageKind === 'unknown'
-          ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '（已自动重进未果）——请退出 WebVPN 重新登录'
-          : (res.pageKind === 'empty' ? '' : '');
+        // 同查询全量已在手（loadAllSearch 刚补齐 112 行）→ 浅层结果不回写：
+        // 回写会把全量列表降级回首页 20 行，跳转高亮随之丢目标（#33 实锤）。
+        // 全量行是同查询首页结果的超集，池也已含全部行，此处只需保持状态
+        const fullAlready = state._searchRowsFull &&
+          NX.serverSigOf() === state._searchRowsFullTag;
+        if (fullAlready) {
+          state._searchIncomplete = false;
+          state._searchError = '';
+        } else {
+          state._searchRows = res.rows || [];
+          state._browseHasMore = res.pageKind === 'ok' && (res.rows || []).length > 0;
+          // 搜索结果合并进会话池（暂存/简介/选课按钮即刻可用——否则 addToStage
+          // 的 allCourses.find 落空，搜索卡片点暂存静默无效；code_seq 去重，
+          // 池内已有行跳过，已选/队列 chip 按 selected/isCandidate 过滤不受污染）
+          if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
+          state._searchTotalPages = res.totalPages || 0;
+          state._searchTotalRows = res.totalRows || 0;
+          // 捕捉不完整（OneTHU 同款）：已加载 < 服务端总数 → 尾部页未探测，
+          // 分页条出「加载全部」补齐入口
+          state._searchIncomplete = queryMode && !!(res.totalRows && (res.rows || []).length < res.totalRows);
+          state._searchError = res.pageKind === 'unknown'
+            ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '（已自动重进未果）——请退出 WebVPN 重新登录'
+            : (res.pageKind === 'empty' ? '' : '');
+        }
       } catch (e) {
         console.warn(NX.TAG, 'server search scheduled:', e);
         state._searchRows = state._searchRows || [];
