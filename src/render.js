@@ -1507,7 +1507,27 @@ NX.highlightJumpTarget = function () {
         : '未命中(列表 ' + list.length + ' 行)');
   } catch (e) {}
   if (idx === -1) {
-    // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
+    // 池里已有该课号多行（概率回填等已爬全量进池）→ 直接用池数据渲染该课号
+    // 列表并重入高亮，绕开搜索管道全部竞态（deferred 重跑降级/浅层回写/
+    // 中途吞意图——#33 三层实锤全在这条管道上）。搜索栏已是该课号，sig 一致
+    // 不会触发重搜；用户之后改词 → sigChanged 正常作废
+    const poolRows = (state.allCourses || []).filter(x => x.code === code);
+    const poolHit = poolRows.find(x => String(x.seq || '0') === String(seq) && tOk(x)) ||
+      poolRows.find(x => String(x.seq || '0') === String(seq));
+    if (poolHit && poolRows.length > 1) {
+      try {
+        console.log(NX.TAG, '[NX-33] 跳转 → 池渲染', poolRows.length, '行（绕开搜索管道）');
+        state._searchRows = poolRows.slice();
+        state._searchRowsFull = true;
+        state._searchRowsFullTag = NX.serverSigOf();
+        state._searchIncomplete = false;
+        state._searchError = '';
+        NX.filterCourses();
+        NX.highlightJumpTarget();
+      } catch (e) { console.warn(NX.TAG, 'jump pool render:', e); }
+      return;
+    }
+    // 池也没有 → 静默爬全量一轮（用户定案：课号检索页数少，压力小），
     // 不弹提示不闪 banner；爬完仍无（课序真不在教务）才静默放弃
     if (state._searchIncomplete && !state._loadingAll && state._jumpAutoAll) {
       state._jumpAutoAll = false;
