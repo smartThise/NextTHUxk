@@ -388,7 +388,7 @@ NX.renderPreviewTT = function (courses, label) {
     const mk = (day, begin, end, tag) => ({
       key: (c.code || 'm') + '_' + (c.seq || '0') + '_' + tag, day, begin, end,
       label: lbl, color: cellColor, probLabel, probBgColor,
-      manual: !!c.manual, id: c.id, code: c.code, seq: c.seq || '0',
+      manual: !!c.manual, id: c.id, code: c.code, seq: c.seq || '0', teacher: c.teacher || '',
       origin: NX.originOf(c.code), tag,
     });
     let n = 0;
@@ -480,7 +480,7 @@ NX.renderPreviewTT = function (courses, label) {
       const tagHtml = '<span class="nx-tta-tag">' + hm(b.begin) + '-' + hm(b.end) + '</span>';
       const probHtml = b.probLabel ? '<span class="nx-tt-prob" style="background:' + b.probBgColor + ';color:' + b.color + '">' + b.probLabel + '</span>' : '';
       return '<div class="nx-tta-b' + (b.manual ? ' nx-tt-manual' : ' nx-tt-jump') + '" style="top:' + top + 'px;height:' + hgt + 'px;left:calc(' + (ln.lane * 100 / ln.lanes) + '% + 1px);width:calc(' + (100 / ln.lanes) + '% - 2px);background:' + bg + ';border-left:3px solid ' + bc + '"' +
-        (b.manual ? ' data-manual-id="' + esc(b.id) + '"' : ' data-code="' + esc(b.code) + '" data-seq="' + esc(b.seq) + '"') +
+        (b.manual ? ' data-manual-id="' + esc(b.id) + '"' : ' data-code="' + esc(b.code) + '" data-seq="' + esc(b.seq) + '" data-teacher="' + esc(b.teacher || '') + '"') +
         ' title="' + esc(b.label + (b.tag ? ' · ' + b.tag : '')) + '">' +
         '<div class="nx-tta-l">' + originHtml + esc(b.label) + probHtml + tagHtml + '</div>' +
         '<span class="nx-tta-x" title="移除">✕</span></div>';
@@ -523,7 +523,7 @@ NX.renderPreviewTT = function (courses, label) {
     };
   });
   el.querySelectorAll('.nx-tta-b.nx-tt-jump').forEach(bEl => {
-    bEl.onclick = () => NX.jumpToCourse(bEl.dataset.code, bEl.dataset.seq);
+    bEl.onclick = () => NX.jumpToCourse(bEl.dataset.code, bEl.dataset.seq, bEl.dataset.teacher);
   });
   const retryBtn = el.querySelector('#nx-undet-retry');
   if (retryBtn) retryBtn.onclick = () => {
@@ -616,7 +616,7 @@ NX.renderStageCart = function () {
     const prob = NX.stageProbHtml(c);
     return '<div class="nx-stage-item" style="flex-direction:column;align-items:stretch;gap:2px">' +
       '<div style="display:flex;align-items:center;gap:4px">' +
-      '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" title="点击按课号搜索此课程" style="min-width:80px;cursor:pointer">' + esc(c.name) + (c.teacher ? ' <span style="color:#9aa1ac;font-weight:400">' + esc(c.teacher) + '</span>' : '') + '</span>' +
+      '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" title="点击按课号搜索此课程" style="min-width:80px;cursor:pointer">' + esc(c.name) + (c.teacher ? ' <span style="color:#9aa1ac;font-weight:400">' + esc(c.teacher) + '</span>' : '') + '</span>' +
       '<span class="nx-stage-info">' + c.credits + '学分</span>' +
       '<select class="nx-stage-flag-sel" data-idx="' + i + '" style="padding:2px 4px;border-radius:6px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + flOpts + '</select>' +
       '<select class="nx-stage-zy-sel" data-idx="' + i + '" style="padding:2px 4px;border-radius:6px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + zyOpts + '</select>' +
@@ -624,7 +624,7 @@ NX.renderStageCart = function () {
   }).join('');
   // 暂存课名点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
-    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq); };
+    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher); };
   });
   el.querySelectorAll('.nx-stage-flag-sel').forEach(sel => {
     sel.onchange = () => {
@@ -749,7 +749,7 @@ NX.renderDrafts = function () {
         const zyOpts = [1, 2, 3].map(z => '<option value="' + z + '"' + (c.zy === z ? ' selected' : '') + '>' + z + '志愿</option>').join('');
         const prob = NX.draftCourseProbHtml(c);
         courseList += '<div style="display:flex;align-items:center;gap:4px;padding:3px 0;font-size:11px;border-bottom:1px solid rgba(0,0,0,.03)">' +
-          '<span class="nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" title="点击按课号搜索此课程" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#1f2329;cursor:pointer">' + esc(c.name) + '</span>' +
+          '<span class="nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" title="点击按课号搜索此课程" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#1f2329;cursor:pointer">' + esc(c.name) + '</span>' +
           '<span style="font-size:10px;color:#9aa1ac">' + c.credits + '学分</span>' +
           '<select class="nx-draft-flag" data-di="' + di + '" data-ci="' + ci + '" style="padding:1px 3px;border-radius:5px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + flOpts + '</select>' +
           '<select class="nx-draft-zy" data-di="' + di + '" data-ci="' + ci + '" style="padding:1px 3px;border-radius:5px;border:1px solid rgba(0,0,0,.1);font-size:10px;font-family:inherit;background:#fff;cursor:pointer">' + zyOpts + '</select>' +
@@ -770,7 +770,7 @@ NX.renderDrafts = function () {
   });
   // 草稿课名点击 → 课号注入搜索栏并按课号精确搜索（OneTHU jumpTo 语义）
   el.querySelectorAll('.nx-jumpable').forEach(item => {
-    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq); };
+    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher); };
   });
   el.querySelectorAll('.nx-draft-flag').forEach(sel => {
     sel.onchange = () => {

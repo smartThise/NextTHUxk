@@ -137,7 +137,7 @@ NX.renderQueueSection = function () {
     const meta = [c.time, c.teacher, c.typeLabel].filter(Boolean).map(x => esc(x)).join(' · ');
     return '<div class="nx-stage-item" style="flex-direction:column;align-items:stretch;gap:2px">' +
       '<div style="display:flex;align-items:center;gap:6px">' +
-        '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" title="点击按课号搜索此课程" style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">' + esc(c.name) +
+        '<span class="nx-stage-name nx-jumpable" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-teacher="' + esc(c.teacher || '') + '" title="点击按课号搜索此课程" style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">' + esc(c.name) +
           ' <span style="color:#9aa1ac;font-weight:400;font-size:11px">' + esc(c.code) + '</span></span>' +
         '<span style="font-size:11px;color:#ff9f1a;font-weight:600;white-space:nowrap">' + pos + '</span>' +
         '<button class="nx-queue-drop" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" title="退出候补队列" style="width:auto;height:22px;padding:0 10px;border:none;border-radius:var(--nx-radius-s,8px);background:rgba(238,77,77,.1);color:var(--nx-red,#ee4d4d);font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;flex:none">退队</button>' +
@@ -146,7 +146,7 @@ NX.renderQueueSection = function () {
     '</div>';
   }).join('');
   list.querySelectorAll('.nx-jumpable').forEach(item => {
-    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq); };
+    item.onclick = ev => { ev.stopPropagation(); NX.jumpToCourse(item.dataset.code, item.dataset.seq, item.dataset.teacher); };
   });
   list.querySelectorAll('.nx-queue-drop').forEach(btn => {
     btn.onclick = async () => {
