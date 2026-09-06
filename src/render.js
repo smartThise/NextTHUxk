@@ -1117,7 +1117,7 @@ NX.renderListFooter = function (o) {
     return b;
   };
   // 数据不完整提示（OneTHU 同款）：宽泛词只探测了前几页 → 显式补齐入口
-  if (o.searchMode && state._searchIncomplete) {
+  if (o.searchMode && state._searchIncomplete && !state._jumpCrawling) {
     const html = '<div class="nx-st" style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;padding:8px 0 2px;font-size:11px;color:#b8860b">' +
       '数据不完整：已加载 ' + o.list.length + ' 门' +
       (state._searchTotalPages > 0 ? '，教务共 ' + state._searchTotalPages + ' 页' : '') +
@@ -1255,6 +1255,7 @@ NX.loadAllSearch = async function () {
     console.warn(NX.TAG, 'load all:', e);
   }
   state._loadingAll = false;
+  state._jumpCrawling = false;
   if (state._searchDeferred) { state._searchDeferred = false; NX.scheduleServerSearch(true); return; }
   NX.filterCourses();
   NX.highlightJumpTarget();   // 跳转自动补齐路径：补齐后重入高亮（#33）
@@ -1378,18 +1379,15 @@ NX.highlightJumpTarget = function () {
     card.dataset.code === String(code) &&
     String(card.dataset.seq || '0') === String(seq));
   if (!target) {
+    // 用户定案（#33）：跳转没找到 → 直接静默爬全量（课号检索页数少，压力小），
+    // 不弹提示不闪 banner；爬完仍无（课序真不在教务）才静默放弃
     if (state._searchIncomplete && !state._loadingAll && state._jumpAutoAll) {
       state._jumpAutoAll = false;
-      void NX.loadAllSearch();   // 补齐后 filterCourses → 本函数重入（_jumpCode 仍在）
+      state._jumpCrawling = true;   // 爬取期间压住「数据不完整」banner（静默）
+      void NX.loadAllSearch();      // 补齐后 filterCourses → 本函数重入（_jumpCode 仍在）
       return;
     }
     state._jumpCode = null;
-    const list = $('nextthuxk-list');
-    if (list && state._searchIncomplete) {
-      list.insertAdjacentHTML('afterbegin',
-        '<div class="nx-st" style="padding:6px 0;font-size:11px;color:#b8860b;text-align:center">未在结果中找到 ' +
-        String(code) + '-' + String(seq || '0') + '（结果不完整——可点「加载当前关键词全部」后重试）</div>');
-    }
     return;
   }
   state._jumpCode = null;
