@@ -1196,6 +1196,10 @@ NX.loadSearchPageTo = async function (target) {
     }
   } catch (e) { console.warn(NX.TAG, 'search page load:', e); }
   state._loadingAll = false;
+  // 补页后按实际加载量重判完整性：拉齐了就不挂「数据不完整」横幅
+  // （fetchJumpRestPages 补齐全部课序后横幅残留实锤——_searchIncomplete
+  // 此前只在初始查询/手动「加载全部」两处置位）
+  state._searchIncomplete = !!(state._searchTotalRows && (state._searchRows || []).length < state._searchTotalRows);
   state._uiPage = Math.min(to, Math.max(1, Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE)));
   NX.filterCourses();
 };
