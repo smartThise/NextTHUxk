@@ -365,11 +365,13 @@ NX.backfillStageRows = function () {
           if (!rows.length && s.name) rows = (await NX.serverSearch({ kcm: s.name }).catch(() => ({}))).rows || [];
           // 必须抓暂存课序号的那一行（航空体育（男）有 3 个课序，抓错行=志愿
           // 多段不盲配=永远无数据，用户点一下搜索把对号行带进来才绿）
-          const hit = rows.find(r => r.code === s.code && String(r.seq || '0') === String(s.seq || '0'))
-            || rows.find(r => r.code === s.code && NX.normSeq(r.seq) === NX.normSeq(s.seq))
-            || rows.find(r => r.code === s.code);
-          if (hit) {
-            NX.mergeServerRows([hit]);
+          // 全量合并该课号的行（旧版兜底挑第一行：10680101 首页=刘烨行，池内
+          // 假唯一 → courseForStage 唯一兜底错标 9% + 关死自动回填，#33 实锤）。
+          // 暂存课序不在首页也没关系——courseForStage 教师仲裁 + backfillStageProbs
+          // 全量爬取会补齐；volMap 照常对池内同号行整批套用
+          const mine = rows.filter(r => r.code === s.code);
+          if (mine.length) {
+            NX.mergeServerRows(mine);
             const same = state.allCourses.filter(x => x.code === s.code);
             if (state.volMap) NX.applyVolunteer(same, state.volMap);   // volMap 已到就立即套（不等下次渲染）
           }

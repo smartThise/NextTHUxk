@@ -211,10 +211,12 @@ NX._courseForStageCore = function (c, pool) {
   if (tHits.length > 1) {
     return tHits.find(timeOk) || tHits.find(seqOk) || undefined;
   }
-  // ④ 无教师信息：裸信课序
+  // ④ 无教师信息：裸信课序。有教师但没命中 → 诚实缺省。
+  //    「池内唯一才兜」已废——唯一性是残缺池假象（stage 行补拉每课只合 1 行，
+  //    实测 10680101 池内同号 1 行=补拉拉回的刘烨行，王洪川 100% 错标 9%；
+  //    且假唯一会关闭自动回填门槛，全量爬取永远不触发）
   if (!t) { const exact = same.find(seqOk); if (exact) return exact; }
-  // ⑤ 唯一同课号才兜
-  return same.length === 1 ? same[0] : undefined;
+  return undefined;
 };
 
 NX.rebuildCourseMap = function () {
@@ -1482,9 +1484,14 @@ NX.highlightJumpTarget = function () {
     if (state._searchIncomplete && !state._loadingAll && state._jumpAutoAll) {
       state._jumpAutoAll = false;
       state._jumpCrawling = true;   // 爬取期间压住「数据不完整」banner（静默）
+      state._jumpAt = Date.now();
       void NX.loadAllSearch();      // 补齐后 filterCourses → 本函数重入（_jumpCode 仍在）
       return;
     }
+    // 爬取中中途重入（volunteer 同步等触发的重渲染）：保留跳转意图等补齐，
+    // 30s 过期防陈旧意图串场（实测中途重入曾把 _jumpCode 吃掉，112 行
+    // 到位后反而没人高亮——两次「未命中」探针实锤）
+    if (state._jumpCrawling && Date.now() - (state._jumpAt || 0) < 30000) return;
     state._jumpCode = null;
     return;
   }
