@@ -688,6 +688,62 @@ NX.primeRatingSession = async function () {
   return state._ratingPrimed === 'ok';
 };
 
+// 解析评教查询页返回的 HTML（油猴 scrapeRatings 双策略移植）：
+// ① EasyUI：tr.datagrid-row + td[field=jsm/kch/kcm/fs1..fs7]
+// ② 普通表：表头含「教师名」「分数1」，列 0序号 1院系 2教师名 3课号 4课名 5-11分数1-7
+// 返回 null=页面没有结果表（服务端未渲染，走 AJAX 兜底）；[]=查到了但无行（真无教评）
+NX.parseRatingTableHtml = function (html) {
+  if (!html) return null;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const easy = [...doc.querySelectorAll('tr.datagrid-row')];
+  if (easy.length) {
+    const out = [];
+    for (const row of easy) {
+      const teacher = row.querySelector('td[field="jsm"]')?.textContent.trim();
+      const code = row.querySelector('td[field="kch"]')?.textContent.trim();
+      if (!teacher || !code) continue;
+      const name = row.querySelector('td[field="kcm"]')?.textContent.trim() || '';
+      const distribution = [1,2,3,4,5,6,7].map(i => parseInt(row.querySelector('td[field="fs' + i + '"]')?.textContent.trim(), 10) || 0);
+      out.push({ code, name, teacher, department: '', distribution });
+    }
+    return out;
+  }
+  for (const table of [...doc.querySelectorAll('table')]) {
+    const headerText = table.querySelector('thead')?.textContent || table.textContent.slice(0, 300);
+    if (!headerText.includes('教师名') || !headerText.includes('分数1')) continue;
+    const out = [];
+    for (const row of table.querySelectorAll('tbody tr')) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 12) continue;
+      const teacher = cells[2]?.textContent.trim();
+      const code = cells[3]?.textContent.trim();
+      if (!teacher || !code) continue;
+      const name = cells[4]?.textContent.trim() || '';
+      const distribution = [];
+      for (let i = 5; i <= 11; i++) distribution.push(parseInt(cells[i]?.textContent.trim(), 10) || 0);
+      out.push({ code, name, teacher, department: cells[1]?.textContent.trim() || '', distribution });
+    }
+    return out;
+  }
+  return null;
+};
+
+NX.ratingRowsOf = function (code, raw) {
+  const out = [];
+  for (const r of raw) {
+    const distribution = r.distribution || [];
+    const total = distribution.reduce((a, b) => a + b, 0);
+    const average = total > 0 ? distribution.reduce((s, v, i) => s + v * (i + 1), 0) / total : 0;
+    out.push({
+      code: String(r.code || code), name: String(r.name || ''), teacher: String(r.teacher || ''),
+      department: String(r.department || ''), distribution, total,
+      average: Math.round(average * 100) / 100,
+      highRatio: total > 0 ? Math.round(((distribution[5] + distribution[6]) / total) * 1000) / 1000 : 0,
+    });
+  }
+  return out;
+};
+
 NX.fetchRatings = async function (code) {
   const { state } = NX;
   const sem = state.SEM;
@@ -702,7 +758,38 @@ NX.fetchRatings = async function (code) {
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
   if (code in cache && Array.isArray(cache[code]) && cache[code].length) { state._ratingCache[code] = cache[code]; console.log(NX.TAG, '[NX-rating]', code, '命中localStorage缓存', cache[code].length, '行'); return cache[code]; }   // 空条目（历史毒化）当 miss 重拉
-  await NX.primeRatingSession();   // 冷会话直 POST 实录 500：先 GET 评教页初始化服务端状态
+  // 主路径（油猴脚本主用法）：cm=Show 查询页表单提交——服务端渲染结果表，
+  // 直接解析 HTML（EasyUI 行或普通表）。这是作者实测采集走的路。
+  const showQuery = 'p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
+    + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code) + '&query_kcm=&page=1&rows=20';
+  try {
+    const resp = await fetch(state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: showQuery, credentials: 'include',
+    });
+    if (resp.ok) {
+      const html = new TextDecoder('gbk').decode(await resp.arrayBuffer());
+      const raw = NX.parseRatingTableHtml(html);
+      if (raw !== null) {
+        const rows = NX.ratingRowsOf(code, raw);
+        console.log(NX.TAG, '[NX-rating]', code, '查询页解析', rows.length, '位教师');
+        state._ratingCache[code] = rows;
+        if (rows.length) {
+          cache[code] = rows;
+          try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+        }
+        return rows;
+      }
+      console.log(NX.TAG, '[NX-rating]', code, '查询页无结果表（未渲染）→ AJAX 兜底');
+    } else {
+      console.warn(NX.TAG, '[NX-rating]', code, '查询页 HTTP', resp.status, '→ AJAX 兜底');
+    }
+  } catch (e) {
+    console.warn(NX.TAG, '[NX-rating]', code, '查询页请求失败:', e.message, '→ AJAX 兜底');
+  }
+  // 兜底路径（油猴批采用法）：先预热评教页再打 Data AJAX（冷会话直 POST 实录 500）
+  await NX.primeRatingSession();
   const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
   const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
