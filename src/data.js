@@ -664,6 +664,19 @@ NX.isRatingCovered = function (code) {
   return true;
 };
 
+// 教评可见状态徽章：面板头部小 chip——「教评 N」（已载 N 门）／「教评…」（抓取
+// 中）／「教评×」（熔断）／「教评?」（预热失败）。用户不开 F12 也能看到教评
+// 链路死活；点击在控制台打全量诊断（content.js 绑定）。
+NX.setRatingChip = function (text, color) {
+  try {
+    const el = NX.state && NX.state.$ && NX.state.$('nextthuxk-rating-tag');
+    if (!el) return;
+    el.style.display = 'inline';
+    el.textContent = text;
+    el.style.color = color || '';
+  } catch (e) {}
+};
+
 // 会话预热（#31 500 根因之一）：AJAX 数据接口 cm=xgpg_qbkcmycdzbData 依赖
 // 评教页面（cm=xgpg_qbkcmycdzbShow）GET 一次初始化的服务端会话状态——
 // 油猴作者 README 的使用流程就是「先打开评教页面再批量采集」。冷会话直
@@ -685,6 +698,7 @@ NX.primeRatingSession = async function () {
     state._ratingPrimed = 'fail';
   }
   console.log(NX.TAG, '[NX-rating] 会话预热:', state._ratingPrimed);
+  if (state._ratingPrimed !== 'ok') NX.setRatingChip('教评?', '#ff9f1a');
   return state._ratingPrimed === 'ok';
 };
 
@@ -758,37 +772,56 @@ NX.fetchRatings = async function (code) {
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
   if (code in cache && Array.isArray(cache[code]) && cache[code].length) { state._ratingCache[code] = cache[code]; console.log(NX.TAG, '[NX-rating]', code, '命中localStorage缓存', cache[code].length, '行'); return cache[code]; }   // 空条目（历史毒化）当 miss 重拉
-  // 主路径（油猴脚本主用法）：cm=Show 查询页表单提交——服务端渲染结果表，
-  // 直接解析 HTML（EasyUI 行或普通表）。这是作者实测采集走的路。
-  const showQuery = 'p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
+  // 主路径（油猴脚本主用法）：cm=Show 查询页——服务端渲染结果表直接解析。
+  // 表单 method 未知 → GET（README 实证页面链接形态，全参数在 URL）和 POST
+  // （表单体携带查询字段）各试一次，谁出结果表谁赢。
+  const commit = (rows, via) => {
+    console.log(NX.TAG, '[NX-rating]', code, via, rows.length, '位教师');
+    NX.setRatingChip('教评 ' + Object.keys(state._ratingCache).length, '#07c160');
+    state._ratingCache[code] = rows;
+    if (rows.length) {
+      cache[code] = rows;
+      try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+    }
+    return rows;
+  };
+  const showUrl = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem)
+    + '&p_xslb=bks&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
+    + '&query_kcm=&page=1&rows=20';
+  const showBody = 'p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code) + '&query_kcm=&page=1&rows=20';
+  // ① GET：全参数进 URL（README 的页面链接就是 GET 形态）
   try {
-    const resp = await fetch(state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks', {
+    const html = await NX.fetchPage(showUrl);
+    if (!NX.isSsoLoginHtml(html) && !NX.isXkDeadHtml(html)) {
+      const raw = NX.parseRatingTableHtml(html);
+      if (raw !== null) return commit(NX.ratingRowsOf(code, raw), 'GET 查询页');
+      console.log(NX.TAG, '[NX-rating]', code, 'GET 查询页无结果表（前80字）:', html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80));
+    } else {
+      console.warn(NX.TAG, '[NX-rating]', code, 'GET 查询页会话死页 → POST');
+    }
+  } catch (e) {
+    console.warn(NX.TAG, '[NX-rating]', code, 'GET 查询页失败:', e.message);
+  }
+  // ② POST：表单提交重建（method=post 形态）
+  try {
+    const resp = await fetch(showUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-      body: showQuery, credentials: 'include',
+      body: showBody, credentials: 'include',
     });
     if (resp.ok) {
       const html = new TextDecoder('gbk').decode(await resp.arrayBuffer());
       const raw = NX.parseRatingTableHtml(html);
-      if (raw !== null) {
-        const rows = NX.ratingRowsOf(code, raw);
-        console.log(NX.TAG, '[NX-rating]', code, '查询页解析', rows.length, '位教师');
-        state._ratingCache[code] = rows;
-        if (rows.length) {
-          cache[code] = rows;
-          try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
-        }
-        return rows;
-      }
-      console.log(NX.TAG, '[NX-rating]', code, '查询页无结果表（未渲染）→ AJAX 兜底');
+      if (raw !== null) return commit(NX.ratingRowsOf(code, raw), 'POST 查询页');
+      console.log(NX.TAG, '[NX-rating]', code, 'POST 查询页无结果表（前80字）:', html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80));
     } else {
-      console.warn(NX.TAG, '[NX-rating]', code, '查询页 HTTP', resp.status, '→ AJAX 兜底');
+      console.warn(NX.TAG, '[NX-rating]', code, 'POST 查询页 HTTP', resp.status);
     }
   } catch (e) {
-    console.warn(NX.TAG, '[NX-rating]', code, '查询页请求失败:', e.message, '→ AJAX 兜底');
+    console.warn(NX.TAG, '[NX-rating]', code, 'POST 查询页失败:', e.message);
   }
-  // 兜底路径（油猴批采用法）：先预热评教页再打 Data AJAX（冷会话直 POST 实录 500）
+  // ③ 兜底（油猴批采用法）：先预热评教页再打 Data AJAX（冷会话直 POST 实录 500）
   await NX.primeRatingSession();
   const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
   const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
@@ -806,6 +839,7 @@ NX.fetchRatings = async function (code) {
       // 和加重服务端负担。本会话不再尝试，下个会话自愈重试。
       state._ratingDead = true;
       state._ratingQueue = [];
+      NX.setRatingChip('教评×', '#ee4d4d');
     }
     throw new Error('HTTP ' + resp.status);
   }
@@ -840,15 +874,24 @@ NX.fetchRatings = async function (code) {
 // 批量拉（去重 + 500ms 间隔顺序消费；失败课号会话内不重打）
 NX.fetchRatingsBatch = function (codes) {
   const state = NX.state;
+  if (state._ratingDead) return;   // 500 熔断后本会话静默
   state._ratingCache = state._ratingCache || {};
   state._ratingTried = state._ratingTried || new Set();
+  state._ratingInflight = state._ratingInflight || new Set();
   const queue = state._ratingQueue || (state._ratingQueue = []);
-  const need = codes.filter(c => c && !(c in state._ratingCache) && !state._ratingTried.has(c) && !queue.includes(c));
+  const need = codes.filter(c => c
+    && NX.isRatingCovered(c)
+    && !(c in state._ratingCache)
+    && !state._ratingTried.has(c)
+    && !queue.includes(c)
+    && !state._ratingInflight.has(c));   // 在飞去重（渲染重入竞态实锤：00040172 连打两次）
   if (!need.length) return;
   queue.push(...need);
   if (state._ratingBusy) return;
   state._ratingBusy = true;
+  NX.setRatingChip('教评…', '#8e8e93');
   (async () => {
+    try {
     for (;;) {
       const code = queue.shift();
       if (!code) break;
@@ -865,7 +908,11 @@ NX.fetchRatingsBatch = function (codes) {
       try { NX.updateRatingBadges(); } catch (e) {}
       await new Promise(r => setTimeout(r, 500));
     }
-    state._ratingBusy = false;
+    } finally {
+      // finally 复位：循环体任何一环抛错（历史实锤：_ratingInflight 未初始化
+      // TypeError）都不能把 _ratingBusy 永久钉死——那是教评整链路静默死亡的开始
+      state._ratingBusy = false;
+    }
   })();
 };
 

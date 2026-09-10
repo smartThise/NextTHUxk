@@ -93,7 +93,13 @@ NX.courseCardHtml = function (c, ctx) {
     const currentProbHtml = currentProbLine(c, currentFlag, currentZy);
     const probHtml = fullProbGrid(c, defFlag);
     const qKey = c.code + '_' + NX.normSeq(c.seq);
-    const qd = queueDataMap[qKey];
+    let qd = queueDataMap[qKey];
+    // 搜索行（kkxxSearch 自带余量列）不进 queueDataMap——用行数据合成，
+    // 队列阶段搜索结果也显示课余量徽章，不再退回预选的志愿/概率渲染。
+    // capacity>0 排除分类页签行的 0/0 占位（未知≠已满，按需补拉前不合成）。
+    if (!qd && isQueuePhase && c.capacity > 0 && c.remaining !== undefined) {
+      qd = { qRemaining: c.remaining, qCapacity: c.capacity, qQueue: 0 };
+    }
     const cand = ctx.candMap.get(qKey);
     let queueInfoHtml = '';
     if (isQueuePhase && (qd || cand)) {
@@ -312,6 +318,9 @@ NX.renderMoreCourses = function () {
   const parts = [];
   for (let i = renderCursor; i < end; i++) parts.push(courseCardHtml(renderList[i], renderCtx));
   renderSentinel.insertAdjacentHTML('beforebegin', parts.join(''));
+  // 本批课号进教评队列（滚动渐进渲染的课也要拉——此前只有 renderCourses 前 60
+  // 门进队，滚出来的课永远不出教评徽章）
+  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(renderList.slice(renderCursor, end).map(x => x.code)); } catch (e) {}
   state.renderCursor = end;
   if (end >= renderList.length && renderObserver) renderObserver.disconnect();
 };
