@@ -267,6 +267,39 @@ NX.renderCourses = function (list) {
   }, { root: el, rootMargin: '800px' });
   io.observe(sentinel);
   state.renderObserver = io;
+  // 官方教评（#31）：本批渲染的课号进抓取队列（内存/localStorage 双缓存去重、
+  // 500ms 间隔顺序抓）。渐进追加的卡片渲染时缓存多半已就位，直接出徽章。
+  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(list.slice(0, 60).map(x => x.code)); } catch (e) {}
+};
+
+// 教评徽章原地更新：评分逐门到位后只改徽章节点，不重建列表（保滚动位置）。
+NX.updateRatingBadges = function () {
+  const state = NX.state;
+  const el = state.$ && state.$('nextthuxk-list');
+  if (!el) return;
+  const src = state.allCourses || [];
+  const renderList = state.renderList || [];
+  el.querySelectorAll('.nx-card[data-code]').forEach(card => {
+    const code = card.dataset.code;
+    const seq = String(card.dataset.seq || '0');
+    const c = src.find(x => x.code === code && String(x.seq || '0') === seq)
+      || renderList.find(x => x.code === code && String(x.seq || '0') === seq);
+    if (!c) return;
+    const head = card.querySelector('.nx-card-head');
+    if (!head) return;
+    const html = NX.xkBadgeHtml(c);
+    const old = head.querySelector('.nx-jp-badge');
+    if (!html) { if (old) old.remove(); return; }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const fresh = tmp.firstElementChild;
+    if (!fresh) return;
+    if (old) old.replaceWith(fresh);
+    else {
+      const credit = head.querySelector('.nx-card-credit');
+      head.insertBefore(fresh, credit || null);
+    }
+  });
 };
 
 NX.renderMoreCourses = function () {
@@ -920,8 +953,12 @@ NX.showCourseModal = async function (code, teacherId) {
   // 官方教评（#31）：简介弹窗顶部教师分布条（教师粒度 1-7 分）
   let ratingHtml = '';
   try {
-    const rows = await NX.fetchRatings(code).catch(() => []);
-    if (rows && rows.length) {
+    const rows = await NX.fetchRatings(code).catch(() => null);
+    if (rows === null) {
+      ratingHtml = '<div style="font-size:11px;color:#ee4d4d;padding:0 0 8px">官方教评获取失败（教务会话或网络），稍后重试</div>';
+    } else if (rows.length === 0) {
+      ratingHtml = '<div style="font-size:11px;color:var(--nx-ink-soft);padding:0 0 8px">该课暂无官方教评数据</div>';
+    } else {
       ratingHtml = '<div style="border-bottom:1px solid var(--nx-line);padding:0 0 12px;margin-bottom:4px">'
         + '<div style="font-size:13px;font-weight:600;margin:0 0 8px">官方教评 · 选课学生推荐度（1-7 分）</div>'
         + rows.map(r => {
@@ -1105,8 +1142,6 @@ NX.filterCourses = function () {
   NX.updateSearchClear();
   const f = state.shadow.querySelector('.nx-chip.on')?.dataset.f || 'all';
   if (f === 'plan') { renderPlanView(q); return; }
-  // 官方教评按需拉（#31）：渲染结果里的课号进批量队列（500ms 间隔顺序抓）
-  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch((state._lastRendered || []).slice(0, 60).map(x => x.code)); } catch (e) {}
 
   // —— 服务端条件指纹：这些变化 = 换一次服务器查询（OneTHU newSearch 语义）。
   //    注意 f（chip）不入指纹：必修/限选/体育/可选/已选/队列全是本地过滤

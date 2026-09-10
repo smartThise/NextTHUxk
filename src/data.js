@@ -657,10 +657,14 @@ NX.fetchRatings = async function (code) {
   const { state } = NX;
   const sem = state.SEM;
   if (!sem) return [];
+  state._ratingCache = state._ratingCache || {};
+  // 学期切换：内存缓存失效（localStorage 键本身按学期分）
+  if (state._ratingSem !== sem) { state._ratingCache = {}; state._ratingSem = sem; state._ratingTried = new Set(); }
+  if (code in state._ratingCache) return state._ratingCache[code];
   const cacheKey = 'nx_ratings_' + sem;
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
-  if (code in cache) return cache[code];
+  if (code in cache) { state._ratingCache[code] = cache[code]; return cache[code]; }
   const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
   const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
@@ -689,6 +693,7 @@ NX.fetchRatings = async function (code) {
     }
   }
   cache[code] = out;
+  state._ratingCache[code] = out;
   try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
   return out;
 };
@@ -710,7 +715,9 @@ NX.fetchRatingsBatch = function (codes) {
       if (!code) break;
       try { state._ratingCache[code] = await NX.fetchRatings(code); }
       catch (e) { state._ratingTried.add(code); console.warn(NX.TAG, 'rating', code, e.message); }
-      try { NX.renderCourses(); } catch (e) {}   // 逐门渐进渲染
+      // 原地更新徽章（不整列表重渲——innerHTML 重建会丢滚动位置，
+      // 且无参 renderCourses() 会把 _lastRendered 打成 [] 制造静默死循环）
+      try { NX.updateRatingBadges(); } catch (e) {}
       await new Promise(r => setTimeout(r, 500));
     }
     state._ratingBusy = false;
