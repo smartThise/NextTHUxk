@@ -763,7 +763,7 @@ NX.fetchRatings = async function (code) {
   const showQuery = 'p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code) + '&query_kcm=&page=1&rows=20';
   try {
-    const resp = await fetch(state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow', {
+    const resp = await fetch(state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
       body: showQuery, credentials: 'include',
