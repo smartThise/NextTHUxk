@@ -649,6 +649,85 @@ NX.pollUntil = async function (fn, delay, tries) {
   return false;
 };
 
+// ─── 官方教评（#31：huangkaka666 油猴脚本 thu-course-helper 逆向实录）───
+// 教务 AJAX：POST xgpg_xspjyxkt.do（cm=xgpg_qbkcmycdzbShow），GBK JSON，
+// 教师粒度 fs1..fs7 分布（fs7 最高）。localStorage 按学期缓存（教评学期内
+// 不变）；500ms 间隔由调用方节流（NX.ratingQueue 消费者）。
+NX.fetchRatings = async function (code) {
+  const { state } = NX;
+  const sem = state.SEM;
+  if (!sem) return [];
+  const cacheKey = 'nx_ratings_' + sem;
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
+  if (code in cache) return cache[code];
+  const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
+  const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
+    + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
+    + '&query_kcm=&page=1&rows=50';
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+    body, credentials: 'include',
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const text = new TextDecoder('gbk').decode(await resp.arrayBuffer());
+  let data;
+  try { data = JSON.parse(text); } catch (e) { data = null; }
+  const out = [];
+  if (data && Array.isArray(data.rows)) {
+    for (const row of data.rows) {
+      const distribution = [1,2,3,4,5,6,7].map(i => parseInt(row['fs' + i], 10) || 0);
+      const total = distribution.reduce((a, b) => a + b, 0);
+      const average = total > 0 ? distribution.reduce((s, v, i) => s + v * (i + 1), 0) / total : 0;
+      out.push({
+        code: String(row.kch || ''), name: String(row.kcm || ''), teacher: String(row.jsm || ''),
+        department: String(row.kkdwmc || ''), distribution, total,
+        average: Math.round(average * 100) / 100,
+        highRatio: total > 0 ? Math.round(((distribution[5] + distribution[6]) / total) * 1000) / 1000 : 0,
+      });
+    }
+  }
+  cache[code] = out;
+  try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+  return out;
+};
+
+// 批量拉（去重 + 500ms 间隔顺序消费；失败课号会话内不重打）
+NX.fetchRatingsBatch = function (codes) {
+  const state = NX.state;
+  state._ratingCache = state._ratingCache || {};
+  state._ratingTried = state._ratingTried || new Set();
+  const queue = state._ratingQueue || (state._ratingQueue = []);
+  const need = codes.filter(c => c && !(c in state._ratingCache) && !state._ratingTried.has(c) && !queue.includes(c));
+  if (!need.length) return;
+  queue.push(...need);
+  if (state._ratingBusy) return;
+  state._ratingBusy = true;
+  (async () => {
+    for (;;) {
+      const code = queue.shift();
+      if (!code) break;
+      try { state._ratingCache[code] = await NX.fetchRatings(code); }
+      catch (e) { state._ratingTried.add(code); console.warn(NX.TAG, 'rating', code, e.message); }
+      try { NX.renderCourses(); } catch (e) {}   // 逐门渐进渲染
+      await new Promise(r => setTimeout(r, 500));
+    }
+    state._ratingBusy = false;
+  })();
+};
+
+NX.ratingOf = function (code, teacher) {
+  const rows = (NX.state._ratingCache || {})[code];
+  if (!rows || !rows.length) return null;
+  const t = String(teacher || '').trim();
+  if (t) {
+    const hit = rows.find(x => x.teacher === t) || rows.find(x => x.teacher.includes(t) || t.includes(x.teacher));
+    if (hit) return hit;
+  }
+  return rows.reduce((best, x) => (x.total > best.total ? x : best), rows[0]);
+};
+
 NX.submitCourse = async function (code, seq, zy, flag) {
   const { state, fetchFormSubmit, fetchSelectedCourses } = NX;
   const { SEM, BASE } = state;

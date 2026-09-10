@@ -38,6 +38,18 @@ NX.tbBadgeHtml = function (c) {
   return '<button type="button" class="nx-tb-badge ' + lv + '" data-code="' + NX.esc(c.code) + '" data-seq="' + NX.esc(c.seq || '0') + '" title="THU选课社区评分 · 点击查看全部点评">★' + a.toFixed(1) + '<i>' + e.count + '评</i></button>';
 };
 
+// ─── 官方教评徽章（#31：教务 xgpg 学生评教，1-7 分制；教师匹配择优）───
+// ≥6 绿 · 5~5.9 琥珀 · <5 红；title 带完整分布摘要
+NX.xkBadgeHtml = function (c) {
+  const m = NX.ratingOf(c.code, c.teacher);
+  if (!m || !m.total) return '';
+  const a = m.average;
+  const lv = a >= 6 ? 'lv-hi' : a >= 5 ? 'lv-mid' : 'lv-bad';
+  const dist = m.distribution.map((v, i) => (i + 1) + '分:' + v).join(' ');
+  const title = NX.esc('官方教评 · ' + m.teacher + '：均分 ' + a.toFixed(2) + ' / 7 · ' + m.total + ' 人评分 · 高分率 ' + (m.highRatio * 100).toFixed(0) + '%\n' + dist);
+  return '<button type="button" class="nx-tb-badge ' + lv + ' nx-jp-badge" data-code="' + NX.esc(c.code) + '" data-seq="' + NX.esc(c.seq || '0') + '" title="' + title + '">教' + a.toFixed(1) + '<i>' + m.total + '评</i></button>';
+};
+
 // ─── Course Card Rendering ────────────────────────────────────
 // 渐进渲染：只渲染视口内+预载距离的卡片（原实现一次 innerHTML 全量 6000+ 卡，
 // 数十万 DOM 节点 + 每按钮闭包，是内存占用巨大/卡顿的主因）
@@ -156,7 +168,7 @@ NX.courseCardHtml = function (c, ctx) {
         '<button class="nx-stage-btn nx-add-stage" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"' + (inStage ? ' disabled' : '') + '>' + (inStage ? '已暂存' : '暂存') + '</button>';
     }
     return '<div class="nx-card' + (c.selected ? ' nx-selected' : '') + '" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-tid="' + esc(c.teacherId || '') + '">' +
-      '<div class="nx-card-head"><span class="nx-card-name">' + esc(c.name) + '</span>' + NX.tbBadgeHtml(c) + '<span class="nx-card-credit">' + c.credits + '学分</span></div>' +
+      '<div class="nx-card-head"><span class="nx-card-name">' + esc(c.name) + '</span>' + NX.tbBadgeHtml(c) + NX.xkBadgeHtml(c) + '<span class="nx-card-credit">' + c.credits + '学分</span></div>' +
       '<div style="font-size:11px;color:#9aa1ac;margin-bottom:3px">' + esc(c.code) + (c.seq ? ' · ' + esc(c.seq) + '课序' : '') + '</div>' +
       '<div class="nx-tags">' + tags.join('') + '</div>' +
       (isQueuePhase && (qd || cand) ? queueInfoHtml : volHtml + compHtml + currentProbHtml + probHtml) + conflictHtml + noteHtml +
@@ -234,6 +246,7 @@ NX.renderCourses = function (list) {
   const $ = state.$;
   const el = $('nextthuxk-list');
   if (!el) return;
+  state._lastRendered = list || [];   // 教评批量拉的课号源（filterCourses 消费）
   if (state.renderObserver) { state.renderObserver.disconnect(); state.renderObserver = null; }
   state.renderList = list;
   state.renderCursor = 0;
@@ -904,13 +917,35 @@ NX.showCourseModal = async function (code, teacherId) {
   title.textContent = c ? c.name + '（' + code + '）' : code;
   body.innerHTML = '<div class="nx-modal-loading"><span class="nx-spin"></span> 正在加载课程简介…</div>';
   mask.classList.add('show');
+  // 官方教评（#31）：简介弹窗顶部教师分布条（教师粒度 1-7 分）
+  let ratingHtml = '';
+  try {
+    const rows = await NX.fetchRatings(code).catch(() => []);
+    if (rows && rows.length) {
+      ratingHtml = '<div style="border-bottom:1px solid var(--nx-line);padding:0 0 12px;margin-bottom:4px">'
+        + '<div style="font-size:13px;font-weight:600;margin:0 0 8px">官方教评 · 选课学生推荐度（1-7 分）</div>'
+        + rows.map(r => {
+          const color = r.average >= 6 ? '#07c160' : r.average >= 5 ? '#ff9f1a' : '#ee4d4d';
+          const bar = r.distribution.map((v, i) => v > 0
+            ? '<div title="' + (i + 1) + '分：' + v + '人" style="width:' + (v / Math.max(1, r.total) * 100).toFixed(2) + '%;height:8px;background:' + (i >= 5 ? '#07c160' : i >= 3 ? '#ff9f1a' : '#ee4d4d') + ';opacity:' + (i >= 5 ? '.85' : i >= 3 ? '.75' : '.65') + '"></div>'
+            : '').join('');
+          return '<div style="margin-bottom:8px">'
+            + '<div style="display:flex;align-items:baseline;gap:8px;font-size:12px">'
+            + '<span style="font-weight:600">' + NX.esc(r.teacher || '（未署名教师）') + '</span>'
+            + '<span style="color:' + color + ';font-weight:700">' + r.average.toFixed(2) + ' / 7</span>'
+            + '<span style="color:var(--nx-ink-soft)">' + r.total + ' 人评分 · 高分率 ' + (r.highRatio * 100).toFixed(0) + '%</span></div>'
+            + '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:4px;background:var(--nx-line)">' + bar + '</div></div>';
+        }).join('')
+        + '<div style="font-size:11px;color:var(--nx-ink-soft);margin-top:4px">数据来自教务 xgpg 学生评教；绿=6/7 分，黄=4/5 分，红=1-3 分</div></div>';
+    }
+  } catch (e) {}
   const fields = await fetchCourseDetail(teacherId, code);
   if (!fields || !Object.keys(fields).length) {
-    body.innerHTML = '<div class="nx-modal-loading">暂无课程简介信息</div>';
+    body.innerHTML = ratingHtml + '<div class="nx-modal-loading">暂无课程简介信息</div>';
     return;
   }
   const order = ['课程编号','课程名称','总学时数','总学分','课程内容简介','Course Description','考核安排','联系人','教材及参考书','上课教师','选课指导语','先修要求','教师教学特色','Office Hour','成绩评定标准','参考书'];
-  let html = '';
+  let html = ratingHtml;
   for (const key of order) {
     if (fields[key] && fields[key].length > 0) {
       html += '<div class="nx-modal-row"><div class="nx-modal-label">' + esc(key) + '</div><div class="nx-modal-val">' + esc(fields[key]) + '</div></div>';
@@ -1070,6 +1105,8 @@ NX.filterCourses = function () {
   NX.updateSearchClear();
   const f = state.shadow.querySelector('.nx-chip.on')?.dataset.f || 'all';
   if (f === 'plan') { renderPlanView(q); return; }
+  // 官方教评按需拉（#31）：渲染结果里的课号进批量队列（500ms 间隔顺序抓）
+  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch((state._lastRendered || []).slice(0, 60).map(x => x.code)); } catch (e) {}
 
   // —— 服务端条件指纹：这些变化 = 换一次服务器查询（OneTHU newSearch 语义）。
   //    注意 f（chip）不入指纹：必修/限选/体育/可选/已选/队列全是本地过滤
