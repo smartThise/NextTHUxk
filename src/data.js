@@ -664,6 +664,41 @@ NX.isRatingCovered = function (code) {
   return true;
 };
 
+// 油猴 thu-course-helper 缓存导入（零网络）：同源 localStorage 的
+// thu_course_ratings_official 形如 { 课号: { 教师名: { courseName, distribution,
+// total, average, highRatio } } }。它的「外挂」显示教评读的就是这份缓存——
+// xgpg 端点对登录会话全 500 的日子里（油猴自己采集同样死），这是唯一的活数据源。
+NX.importUserscriptRatings = function () {
+  const { state } = NX;
+  let data;
+  try { data = JSON.parse(localStorage.getItem('thu_course_ratings_official') || '{}'); } catch (e) { return 0; }
+  if (!data || typeof data !== 'object') return 0;
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem('nx_ratings_' + (state.SEM || '')) || '{}'); } catch (e) {}
+  let n = 0;
+  for (const [code, teachers] of Object.entries(data)) {
+    if (!NX.isRatingCovered(code)) continue;
+    if (cache[code] && cache[code].length) continue;   // 自己抓过的数据优先
+    const rows = Object.entries(teachers || {}).map(([teacher, v]) => ({
+      code: String(code), name: String((v && v.courseName) || ''), teacher: String(teacher || ''),
+      department: '',
+      distribution: (v && Array.isArray(v.distribution)) ? v.distribution : [0,0,0,0,0,0,0],
+      total: (v && v.total) || 0, average: (v && v.average) || 0, highRatio: (v && v.highRatio) || 0,
+    })).filter(r => r.total > 0);
+    if (!rows.length) continue;
+    cache[code] = rows;
+    state._ratingCache[code] = rows;
+    n++;
+  }
+  if (n) {
+    try { localStorage.setItem('nx_ratings_' + (state.SEM || ''), JSON.stringify(cache)); } catch (e) {}
+    console.log(NX.TAG, '[NX-rating] 油猴缓存导入:', n, '门');
+    NX.setRatingChip('教评 ' + Object.keys(state._ratingCache).length, '#07c160');
+    try { NX.updateRatingBadges(); } catch (e) {}
+  }
+  return n;
+};
+
 // 教评可见状态徽章：面板头部小 chip——「教评 N」（已载 N 门）／「教评…」（抓取
 // 中）／「教评×」（熔断）／「教评?」（预热失败）。用户不开 F12 也能看到教评
 // 链路死活；点击在控制台打全量诊断（content.js 绑定）。
@@ -875,6 +910,10 @@ NX.fetchRatings = async function (code) {
 NX.fetchRatingsBatch = function (codes) {
   const state = NX.state;
   if (state._ratingDead) return;   // 500 熔断后本会话静默
+  if (!state._userscriptImported) {
+    state._userscriptImported = true;
+    try { NX.importUserscriptRatings(); } catch (e) {}
+  }
   state._ratingCache = state._ratingCache || {};
   state._ratingTried = state._ratingTried || new Set();
   state._ratingInflight = state._ratingInflight || new Set();
