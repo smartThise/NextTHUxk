@@ -500,7 +500,9 @@ NX.resolveCourseZy = async function (courses, selMap, zyCache) {
     missingZy.forEach((c, i) => {
       if (values[i] > 0) {
         c.zy = values[i];
-        zyCache[c.code + '_' + (c.seq || '0')] = { zy: c.zy, typeCode: c.typeCode, typeLabel: c.typeLabel, confirmed: false };
+        // #36-4：用户在弹窗里亲手选过 = 本课号志愿已确认，永不再问
+        //（旧版 confirmed:false → 每次 refreshSelected 都重新弹，操作一次弹一次）
+        zyCache[c.code + '_' + (c.seq || '0')] = { zy: c.zy, typeCode: c.typeCode, typeLabel: c.typeLabel, confirmed: true, confirmedAt: Date.now() };
         cacheUpdated = true;
       }
     });
@@ -555,6 +557,31 @@ NX.refreshSelected = async function () {
 };
 
 // ─── Stage Cart & Drafts ──────────────────────────────────────
+
+// #36-2：把课程加入当前正在预览的草稿（此前草稿「编辑」只能删不能加）
+NX.addToCurrentDraft = function (code, seq, flag, zy) {
+  const { state, store, showXkResult, baseFlag, renderDrafts, renderPreviewTT } = NX;
+  const { allCourses, savedDrafts, previewDraftIdx } = state;
+  const $ = state.$;
+  const d = savedDrafts[previewDraftIdx];
+  if (!d) { showXkResult({ ok: false, msg: '先在草稿列表点「预览 & 修改」选中一个草稿' }); return; }
+  const c = allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+  if (!c) return;
+  if (d.courses.some(s => s.code === code && String(s.seq || '0') === String(seq || '0'))) {
+    showXkResult({ ok: false, msg: '该课程已在草稿「' + d.name + '」中' }); return;
+  }
+  d.courses.push({
+    code: c.code, seq: c.seq || '0', name: c.name, teacher: c.teacher || '',
+    time: c.time || '', credits: c.credits || 0,
+    flag: flag || baseFlag(c), zy: parseInt(zy) || 3,
+    baseFlag: baseFlag(c),
+  });
+  store.set('drafts', savedDrafts);
+  renderDrafts();
+  NX.invalidatePreview();
+  renderPreviewTT(d.courses, '草稿「' + d.name + '」预览');
+  showXkResult({ ok: true, msg: '已加入草稿「' + d.name + '」（现有 ' + d.courses.length + ' 门）' });
+};
 
 NX.addToStage = function (code, seq, flag, zy) {
   const { state, store, showXkResult, baseFlag, renderStageCart, filterCourses } = NX;
@@ -653,15 +680,33 @@ NX.exportDraft = function (draft) {
     })),
   };
   const json = JSON.stringify(data);
-  navigator.clipboard.writeText(json).then(
-    () => showXkResult({ ok: true, msg: '「' + draft.name + '」已复制到剪贴板，可分享给他人' }),
-    () => {
-      const ta = document.createElement('textarea');
-      ta.value = json; document.body.appendChild(ta);
-      ta.select(); document.execCommand('copy'); ta.remove();
+  // #36-1：content script 无 clipboardWrite 权限时 navigator.clipboard 是
+  // undefined（Firefox/部分 Chromium）→ 直接抛 TypeError 且无人接住 = 按钮
+  // 「单击无反应」实锤。修：可用性探测 + 两条降级（execCommand → 直接弹
+  // textarea 让用户手动 Ctrl+C），任何路径都有可见反馈。
+  const fallbackCopy = () => {
+    const ta = document.createElement('textarea');
+    ta.value = json;
+    ta.style.cssText = 'position:fixed;top:50%;left:50%;width:520px;max-width:86vw;height:160px;transform:translate(-50%,-50%);z-index:99999;font:12px/1.5 monospace;padding:10px;border-radius:10px;border:1px solid rgba(28,39,64,.2);box-shadow:0 12px 48px rgba(28,39,64,.28)';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    if (ok) {
+      ta.remove();
       showXkResult({ ok: true, msg: '「' + draft.name + '」已复制到剪贴板' });
+    } else {
+      showXkResult({ ok: false, msg: '自动复制失败：文本框已弹出，请全选后 Ctrl+C 手动复制' });
     }
-  );
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(json).then(
+      () => showXkResult({ ok: true, msg: '「' + draft.name + '」已复制到剪贴板，可分享给他人' }),
+      fallbackCopy
+    );
+  } else {
+    fallbackCopy();
+  }
 };
 
 NX.exportStageCart = function () {
@@ -695,30 +740,75 @@ NX.importToStage = function (jsonStr) {
 };
 
 NX.promoteDraft = async function (draft) {
-  const { state, showXkResult, fetchSelectedCourses, dropCourse, submitCourse, refreshSelected, renderPreviewTT } = NX;
+  const { state, showXkResult, fetchSelectedCourses, dropCourse, submitCourse, refreshSelected, renderPreviewTT, confirmDrop } = NX;
   const $ = state.$;
   const toast = $('nextthuxk-toast');
   const prog = (msg) => { if (toast) { toast.className = 'nx-toast'; toast.style.cssText = 'display:block;opacity:1;background:rgba(29,31,36,.82);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);color:#fff'; toast.textContent = msg; } };
   try {
     prog('正在获取已选课程…');
     const current = await fetchSelectedCourses();
-    for (let i = 0; i < current.length; i++) {
-      prog('退选 ' + (i + 1) + '/' + current.length + ': ' + current[i].name);
-      await dropCourse(current[i].code, current[i].seq);
+    // ── 差分提交（OneTHU 同款）：绝不「全退再全选」。补退选窗口中途失败
+    //    会留下半张课表（已退的抢不回来）。code+seq 双键比对分三桶：
+    //    保留（交集，不碰）/ 新选（草稿有、当前无）/ 退掉（当前有、草稿无）。
+    //    顺序铁律：先选后退——最坏情况新课没选上但旧课全在（回到提交前
+    //    原状可重试），永不劣于提交前状态。
+    const key = (code, seq) => code + '_' + String(seq || '0');
+    const wantKeys = new Set(draft.courses.map(c => key(c.code, c.seq)));
+    const haveKeys = new Set(current.map(c => key(c.code, c.seq)));
+    const toAdd = draft.courses.filter(c => !haveKeys.has(key(c.code, c.seq)));
+    const toDrop = current.filter(c => !wantKeys.has(key(c.code, c.seq)));
+    const kept = draft.courses.length - toAdd.length;
+    if (!toAdd.length && !toDrop.length) {
+      showXkResult({ ok: true, msg: '「' + draft.name + '」与当前已选完全一致，无需提交' });
+      return;
+    }
+    // 退课逐门二次确认（玻璃警告弹窗）——用户令：有人没意识到退选是真退
+    for (const c of toDrop) {
+      const go = await confirmDrop(c.name, c.code + '_' + String(c.seq || '0'));
+      if (!go) {
+        prog('已取消：' + c.name + ' 不退选，提交中止（已执行部分不受影响）');
+        break;
+      }
+      prog('退选 ' + c.name + '…');
+      await dropCourse(c.code, c.seq);
       await new Promise(r => setTimeout(r, 1000));
     }
-    for (let i = 0; i < draft.courses.length; i++) {
-      const c = draft.courses[i];
-      prog('选课 ' + (i + 1) + '/' + draft.courses.length + ': ' + c.name);
+    for (let i = 0; i < toAdd.length; i++) {
+      const c = toAdd[i];
+      prog('新选 ' + (i + 1) + '/' + toAdd.length + ': ' + c.name);
       await submitCourse(c.code, c.seq, c.zy || 3, c.flag || 'bx');
       // 排队选课内部已有 1.5s 延时，这里额外等 2s 避免触发验证码
       await new Promise(r => setTimeout(r, 2000));
     }
     await refreshSelected();
-    showXkResult({ ok: true, msg: '课表「' + draft.name + '」已全部提交！' });
+    showXkResult({ ok: true, msg: '「' + draft.name + '」差分提交完成：新选 ' + toAdd.length + '、退掉 ' + toDrop.length + '、保留 ' + kept });
     const sel = state.allCourses.filter(c => c.selected);
     renderPreviewTT(sel, '当前已选');
-  } catch (e) { showXkResult({ ok: false, msg: '提交出错: ' + e.message }); }
+  } catch (e) { showXkResult({ ok: false, msg: '提交出错（已执行部分不回滚）: ' + e.message }); }
+};
+
+// ─── 退选玻璃警告弹窗（用户令：每退一门课，大弹窗警告「xxx课即将退选，请确认！」
+//     材质与课程简介弹窗 nx-modal 同款玻璃）──────────────────────
+NX.confirmDrop = function (name, keyText) {
+  const { esc, state } = NX;
+  const $ = state.$;
+  return new Promise(resolve => {
+    const mask = $('nextthuxk-drop-modal');
+    const titleEl = $('nextthuxk-drop-title');
+    const subEl = $('nextthuxk-drop-sub');
+    if (!mask || !titleEl || !subEl) { resolve(window.confirm('确定退选「' + name + '」？此操作将真实退课！')); return; }
+    titleEl.textContent = '⚠️ ' + name + ' 即将退选';
+    subEl.textContent = keyText + ' · 退选是真实退课操作，立即生效；补退选阶段退掉的名额可能立刻被抢走。如非本意请点「取消」。';
+    mask.classList.add('show');
+    const done = ok => { mask.classList.remove('show'); cleanup(); resolve(ok); };
+    const onOk = () => done(true);
+    const onNo = () => done(false);
+    const onMask = ev => { if (ev.target === mask) done(false); };
+    const okBtn = $('nextthuxk-drop-ok');
+    const noBtns = [$('nextthuxk-drop-no'), $('nextthuxk-drop-no2')].filter(Boolean);
+    okBtn.onclick = onOk; noBtns.forEach(b => { b.onclick = onNo; }); mask.onclick = onMask;
+    function cleanup() { okBtn.onclick = null; noBtns.forEach(b => { b.onclick = null; }); mask.onclick = null; }
+  });
 };
 
 NX.canAdjustZy = function (code, seq, targetZy) {
@@ -747,7 +837,9 @@ NX.handlePreviewRemove = async function (code, seq) {
   if (previewMode === 'selected') {
     const c = allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq));
     const name = c?.name || code;
-    if (!confirm('确认退选「' + name + '」？')) return;
+    // 课表块上的退选同样是真实退课：走玻璃警告弹窗（用户令）
+    const go = await NX.confirmDrop(name, code + '_' + String(seq || '0'));
+    if (!go) return;
     const res = await dropCourse(code, seq);
     showXkResult(res);
     // 增量刷新（原实现 NX.launch() 全量重启：重新拉目录/队列/渲染整个面板）

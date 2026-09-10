@@ -124,6 +124,9 @@ NX._fetchRaw = async function (url, opts = {}) {
 // 重进一次教务入口根（BASE）即自动换票，无需退出登录。60s 冷却防循环。
 NX.fetchPage = async function (url, opts = {}) {
   const html = await NX._fetchRaw(url, opts);
+  // SSO 登录页（#38）：主会话真没了，换票救不了——直接透传给上层
+  // （serverSearch 会给「重新登录 WebVPN」的明确指引），不白跑重进。
+  if (NX.isSsoLoginHtml && NX.isSsoLoginHtml(html)) return html;
   const shell = html && (html.includes('__vpn_hostname_data') || html.includes('__vpn_app_hostname_data'));
   if (shell && NX.isXkDeadHtml && NX.reenterZhjwxk) {
     if (await NX.reenterZhjwxk()) {

@@ -1306,6 +1306,14 @@ NX.isXkDeadHtml = function (html) {
     || html.includes('__vpn_hostname_data');
 };
 
+// #38：死页细分——SSO 登录页（用户注销 WebVPN 后教务 302 到统一认证）
+// 与会话超时壳页是两种病：前者换票救不了（主会话真没了），重进入口也
+// 只会再次 302。旧版没有 do/off/ui/auth/login 判据所以「旧版正常」——
+// 2.1 把 SSO 页当死页后，reenterZhjwxk 白跑且错误提示误导。
+NX.isSsoLoginHtml = function (html) {
+  return !!html && (html.includes('do/off/ui/auth/login') || html.includes('passLogin'));
+};
+
 /** 服务端课程搜索（kkxxSearch，OneTHU searchXkCourses 语义移植）。
  *  中文筛选参数（课名/教师）必须 gbkPercentEncode——GBK 页面 UTF-8 直发解出
  *  乱码 LIKE 匹配不到 → 0 行。pageKind：ok=有行；empty=结果页但 0 行（真无匹配）；
@@ -1336,6 +1344,9 @@ NX.serverSearch = async function (opts) {
   let html;
   try { html = await fetchPage(url); } catch (e) {
     return { rows: [], pageKind: 'unknown', htmlHead: String(e.message || e) };
+  }
+  if (NX.isSsoLoginHtml(html)) {
+    return { rows: [], pageKind: 'unknown', htmlHead: 'WebVPN/统一认证已注销（页面被重定向到登录页）——请重新登录 WebVPN 后刷新；若在校园网内可直连 jwweb 而不经 WebVPN' };
   }
   if (NX.isXkDeadHtml(html)) {
     return { rows: [], pageKind: 'unknown', htmlHead: '会话死页（' + html.replace(/<[^>]+>/g, ' ').trim().slice(0, 80) + '）' };

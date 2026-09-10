@@ -130,7 +130,11 @@ NX.courseCardHtml = function (c, ctx) {
       const probInline = isQueuePhase && (qd || cand)
         ? '<span class="nx-inline-prob" style="color:' + (cand ? '#ff9f1a' : qd.qRemaining > 0 ? '#07c160' : '#ee4d4d') + '">' + (cand ? '排队第' + cand.myPos + '名' : qd.qRemaining > 0 ? '余' + qd.qRemaining : '已满') + '</span>'
         : '<span class="nx-inline-prob nx-card-inline-prob" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" style="color:' + p.color + '">' + (p.percentLabel || p.label) + '</span>';
-      selectBtn = '<select class="nx-type-select" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '">' + flagOpts + '</select><select class="nx-zy-select" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"><option value="3">3志愿</option><option value="2">2志愿</option><option value="1">1志愿</option></select>' + probInline + '<button class="nx-select-btn" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '">选课</button><button class="nx-stage-btn nx-add-stage" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"' + (inStage ? ' disabled' : '') + '>' + (inStage ? '已暂存' : '暂存') + '</button>';
+      // #36-2：草稿预览态下可把课直接加进正在编辑的草稿（此前只能删）
+      const addToDraftBtn = state.previewMode === 'draft' && state.savedDrafts[state.previewDraftIdx]
+        ? '<button class="nx-stage-btn nx-add-draft" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" title="加入正在编辑的草稿">+草稿</button>'
+        : '';
+      selectBtn = '<select class="nx-type-select" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '">' + flagOpts + '</select><select class="nx-zy-select" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"><option value="3">3志愿</option><option value="2">2志愿</option><option value="1">1志愿</option></select>' + probInline + '<button class="nx-select-btn" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '">选课</button><button class="nx-stage-btn nx-add-stage" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"' + (inStage ? ' disabled' : '') + '>' + (inStage ? '已暂存' : '暂存') + '</button>' + addToDraftBtn;
     } else if (c.isCandidate && cand) {
       // 已在候补队列中：显示排队位置 + 删除按钮
       selectBtn = '<span style="font-size:11px;color:#ff9f1a;font-weight:600">排队第' + cand.myPos + '名 / 共' + cand.queueTotal + '人</span>' +
@@ -322,12 +326,36 @@ NX.bindCardDelegation = function (el) {
         .catch(err => showXkResult({ ok: false, msg: err.message }))
         .finally(() => { btn.disabled = false; btn.textContent = origText; });
     } else if (cls.contains('nx-drop-btn')) {
+      // 真实退课必须先过玻璃警告弹窗（用户令：有人没意识到退选是真的退了）
       const origText = btn.textContent;
-      btn.disabled = true; btn.textContent = origText.includes('删除') ? '退出中…' : '退选中…';
-      dropCourse(btn.dataset.code, btn.dataset.seq)
-        .then(res => { showXkResult(res); return res.ok ? refreshSelected() : null; })
-        .catch(err => showXkResult({ ok: false, msg: err.message }))
-        .finally(() => { btn.disabled = false; btn.textContent = origText; });
+      const code = btn.dataset.code, seq = btn.dataset.seq;
+      const row = NX.state.allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+      const nm = row ? row.name : code;
+      NX.confirmDrop(nm, code + '_' + String(seq || '0')).then(go => {
+        if (!go) return;
+        btn.disabled = true; btn.textContent = origText.includes('删除') ? '退出中…' : '退选中…';
+        dropCourse(code, seq)
+          .then(res => {
+            showXkResult(res);
+            // #36-5：成功即本地摘牌（不等 refreshSelected 网络往返——期间旧行
+            // 仍在屏上，退选按钮可再点，二连击会弹「选中表示删除」惊吓窗）
+            if (res.ok) {
+              NX.state.allCourses.forEach(x => {
+                if (x.code === code && String(x.seq || '0') === String(seq || '0')) { x.selected = false; x.isCandidate = false; x.zy = 0; }
+              });
+              if (NX.state.candidateCourses) NX.state.candidateCourses = NX.state.candidateCourses.filter(x => !(x.code === code && String(x.seq || '0') === String(seq || '0')));
+              try { NX.filterCourses(); } catch (e) { console.warn(NX.TAG, 're-render after drop:', e); }
+            }
+            return res.ok ? refreshSelected() : null;
+          })
+          .catch(err => showXkResult({ ok: false, msg: err.message }))
+          .finally(() => { btn.disabled = false; btn.textContent = origText; });
+      });
+    } else if (cls.contains('nx-add-draft')) {
+      const actions = btn.parentElement;
+      const flag = actions.querySelector('.nx-type-select')?.value || 'bx';
+      const zy = actions.querySelector('.nx-zy-select')?.value || '3';
+      NX.addToCurrentDraft(btn.dataset.code, btn.dataset.seq, flag, zy);
     } else if (cls.contains('nx-vol-btn')) {
       const curZy = parseInt(btn.dataset.zy) || 1;
       const targetZy = btn.dataset.dir === 'up' ? curZy - 1 : curZy + 1;
@@ -362,6 +390,7 @@ NX.bindCardDelegation = function (el) {
 
 NX.renderPreviewTT = function (courses, label) {
   const { esc, state, typeCodeToFlag, calcProb, probBg, fullProbGrid, parseTimeSlots, handlePreviewRemove } = NX;
+  void NX.confirmDrop;
   const { allCourses, queueDataMap, isQueuePhase, candidateCourses, stageCart, savedDrafts, previewMode, previewDraftIdx } = state;
   const $ = state.$;
   const el = $('nextthuxk-preview-tt');
@@ -702,14 +731,23 @@ NX.backfillStageProbs = async function () {
   state._probBfDeferred = 0;
   const tried = state._probBfTried || (state._probBfTried = new Map());
   const items = [];
+  // #36-6「概率开盲盒」：已选课也纳入回填——池内已选行若无志愿统计
+  // （只搜过其他课号的页，volMap 不覆盖），概率恒「无数据」，直到用户
+  // 点开详情才顺带拉到。挂载后静默补齐，与暂存/草稿同一套封顶节奏。
+  (state.allCourses || []).forEach(c => { if (c.selected && !c.manual) items.push(c); });
   (state.stageCart || []).forEach(c => { if (!c.manual) items.push(c); });
   (state.savedDrafts || []).forEach(d => (d.courses || []).forEach(c => { if (!c.manual) items.push(c); }));
   const seen = new Set();
   const need = [];
+  const hasVolData = x => {
+    const r = NX.courseForStage(x);
+    if (!r) return false;
+    return !!(r.volRequired || r.volElective || r.volOptional || r.volSports);
+  };
   for (const c of items) {
     if (seen.has(c.code)) continue;
     seen.add(c.code);
-    if (NX.courseForStage(c)) continue;           // 池里已有（精确/教师/唯一兜底命中）
+    if (hasVolData(c)) continue;                  // 池里已有且志愿统计到位
     if ((tried.get(c.code) || 0) >= 2) continue;  // 两次封顶（失败多为会话问题，不刷屏）
     need.push(c.code);
   }

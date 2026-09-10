@@ -73,6 +73,21 @@ const HTML = `
       </div>
     </div>
   </div>
+
+          <div class="nx-modal-mask" id="nextthuxk-drop-modal">
+            <div class="nx-modal" style="width:440px">
+              <div class="nx-modal-head"><span class="nx-modal-title" id="nextthuxk-drop-title" style="color:#ee4d4d">即将退选</span><button class="nx-modal-close" id="nextthuxk-drop-no">×</button></div>
+              <div style="padding:22px 24px 6px;text-align:center">
+                <div style="font-size:44px;line-height:1;margin-bottom:14px">⚠️</div>
+                <div style="font-size:17px;font-weight:700;color:var(--nx-ink);margin-bottom:8px" id="nextthuxk-drop-title2">此课程即将退选，请确认！</div>
+                <div style="font-size:12px;color:var(--nx-ink-soft);line-height:1.6" id="nextthuxk-drop-sub"></div>
+              </div>
+              <div style="display:flex;gap:10px;padding:18px 24px 22px;justify-content:center">
+                <button class="nx-stage-btn" id="nextthuxk-drop-no2" style="min-width:120px;height:38px;font-size:14px">取消</button>
+                <button class="nx-stage-btn" id="nextthuxk-drop-ok" style="min-width:120px;height:38px;font-size:14px;background:#ee4d4d;color:#fff;border:none;box-shadow:0 6px 20px rgba(238,77,77,.35)">确认退选</button>
+              </div>
+            </div>
+          </div>
     <div class="nx-header">
       <div class="nx-logo"><span class="othu-logo" style="font-size:14px"><span class="lp">(</span><span class="word"><i>O</i><i>n</i><i>e</i></span><span></span><span class="lp"> </span><span class="tu">T</span><span class="tu">H</span><span class="tu">U</span><span class="lp">)</span></span><span>NextTHUxk</span><span id="nx-build-tag" style="font-size:9px;color:rgba(255,255,255,.35);margin-left:8px;letter-spacing:.5px">${NX.BUILD || ''}</span> <span id="nextthuxk-phase-tag" style="display:none;font-size:11px;background:rgba(47,107,255,.1);color:var(--nx-accent);padding:2px 8px;border-radius:4px;margin-left:6px"></span></div>
       <div style="display:flex;gap:8px;align-items:center">

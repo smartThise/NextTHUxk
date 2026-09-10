@@ -186,6 +186,24 @@ NX.fullProbGrid = function (courseOrAc, bf) {
   const rows = [];
   for (const f of aFlags) {
     const cells = [];
+    // #39 任选优先档：任选志愿串 (N) 前缀 = 优先任选志愿人数，是独立于
+    // 1/2/3 的第 0 档（submitCourse is_zyrxk=1 走的就是它）。此前网格
+    // 只有三档，用户走优先通道却只能看到 1/2/3 志愿概率 → 「未能区分
+    // 任选优先和任选」。优先档概率 = 级联扣完 bx/xx 后的余量 / N。
+    if (f === 'rx') {
+      const rxV = NX.parseVolArr(courseOrAc.volOptional);
+      const pri = rxV && rxV.priority;
+      if (pri > 0) {
+        const cap = parseInt(courseOrAc.volCapacity || courseOrAc.capacity || 0, 10) || 0;
+        let rem = cap;
+        const bxV = NX.parseVolArr(courseOrAc.volRequired);
+        const xxV = NX.parseVolArr(courseOrAc.volElective);
+        if (bxV) for (let i = 0; i < 3; i++) rem -= bxV[i];
+        if (xxV) for (let i = 0; i < 3; i++) rem -= xxV[i];
+        const p = NX.probResult(rem, pri);
+        cells.push('<span style="color:' + p.color + ';font-weight:700">优先:' + p.label + '</span>');
+      }
+    }
     for (let z = 1; z <= 3; z++) {
       const p = NX.calcProb(courseOrAc, f, z);
       if (p.prob >= 0) {
