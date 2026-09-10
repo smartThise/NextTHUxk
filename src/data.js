@@ -653,10 +653,47 @@ NX.pollUntil = async function (fn, delay, tries) {
 // 教务 AJAX：POST xgpg_xspjyxkt.do（cm=xgpg_qbkcmycdzbShow），GBK JSON，
 // 教师粒度 fs1..fs7 分布（fs7 最高）。localStorage 按学期缓存（教评学期内
 // 不变）；500ms 间隔由调用方节流（NX.ratingQueue 消费者）。
+// 教评只覆盖本校课程：外校课号（PK/GPK/BW 前缀或 0000 开头的数字段——
+// 北大本科课在本系统里就是 0000xxxxx 编码，seq 90 族）打过去必 500，
+// 白白打爆服务端，直接跳过。
+NX.isRatingCovered = function (code) {
+  const c = String(code || '');
+  if (!c) return false;
+  if (NX.originOf && NX.originOf(c)) return false;
+  if (c.startsWith('0000')) return false;   // 北大本科数字编码块（00000042/00030052…）
+  return true;
+};
+
+// 会话预热（#31 500 根因之一）：AJAX 数据接口 cm=xgpg_qbkcmycdzbData 依赖
+// 评教页面（cm=xgpg_qbkcmycdzbShow）GET 一次初始化的服务端会话状态——
+// 油猴作者 README 的使用流程就是「先打开评教页面再批量采集」。冷会话直
+// POST 实录 500。每会话一次，失败不阻断（仍试一次 AJAX）。
+NX.primeRatingSession = async function () {
+  const { state } = NX;
+  if (state._ratingPrimed) return state._ratingPrimed === 'ok';
+  const sem = state.SEM;
+  if (!sem || !state.BASE) return false;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15000);
+    const resp = await fetch(state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks', {
+      credentials: 'include', signal: ctl.signal,
+    });
+    clearTimeout(timer);
+    state._ratingPrimed = resp.ok ? 'ok' : 'fail';
+  } catch (e) {
+    state._ratingPrimed = 'fail';
+  }
+  console.log(NX.TAG, '[NX-rating] 会话预热:', state._ratingPrimed);
+  return state._ratingPrimed === 'ok';
+};
+
 NX.fetchRatings = async function (code) {
   const { state } = NX;
   const sem = state.SEM;
   if (!sem) return [];
+  if (state._ratingDead) throw new Error('教评接口本会话不可用（已熔断）');
+  if (!NX.isRatingCovered(code)) return [];
   state._ratingCache = state._ratingCache || {};
   // 学期切换：内存缓存失效（localStorage 键本身按学期分）
   if (state._ratingSem !== sem) { state._ratingCache = {}; state._ratingSem = sem; state._ratingTried = new Set(); }
@@ -665,16 +702,26 @@ NX.fetchRatings = async function (code) {
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
   if (code in cache && Array.isArray(cache[code]) && cache[code].length) { state._ratingCache[code] = cache[code]; console.log(NX.TAG, '[NX-rating]', code, '命中localStorage缓存', cache[code].length, '行'); return cache[code]; }   // 空条目（历史毒化）当 miss 重拉
+  await NX.primeRatingSession();   // 冷会话直 POST 实录 500：先 GET 评教页初始化服务端状态
   const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
   const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
-    + '&query_kcm=&page=1&rows=50';
+    + '&query_kcm=&page=1&rows=20';   // 油猴实证值：rows=20
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
     body, credentials: 'include',
   });
-  if (!resp.ok) { console.warn(NX.TAG, '[NX-rating]', code, 'HTTP', resp.status); throw new Error('HTTP ' + resp.status); }
+  if (!resp.ok) {
+    console.warn(NX.TAG, '[NX-rating]', code, 'HTTP', resp.status);
+    if (resp.status === 500) {
+      // 熔断：500 = 服务端查询异常（外校课号/会话态）——继续打只会刷爆日志
+      // 和加重服务端负担。本会话不再尝试，下个会话自愈重试。
+      state._ratingDead = true;
+      state._ratingQueue = [];
+    }
+    throw new Error('HTTP ' + resp.status);
+  }
   const text = new TextDecoder('gbk').decode(await resp.arrayBuffer());
   let data;
   try { data = JSON.parse(text); } catch (e) {
@@ -718,11 +765,14 @@ NX.fetchRatingsBatch = function (codes) {
     for (;;) {
       const code = queue.shift();
       if (!code) break;
+      state._ratingInflight.add(code);
       try {
         state._ratingCache[code] = await NX.fetchRatings(code);
         console.log(NX.TAG, '[NX-rating]', code, '→', (state._ratingCache[code] || []).length, '位教师');
       }
       catch (e) { state._ratingTried.add(code); console.warn(NX.TAG, '[NX-rating]', code, '失败:', e.message); }
+      state._ratingInflight.delete(code);
+      if (state._ratingDead) { queue.length = 0; break; }   // 500 熔断即收队，不再打爆服务端
       // 原地更新徽章（不整列表重渲——innerHTML 重建会丢滚动位置，
       // 且无参 renderCourses() 会把 _lastRendered 打成 [] 制造静默死循环）
       try { NX.updateRatingBadges(); } catch (e) {}

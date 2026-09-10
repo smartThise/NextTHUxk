@@ -958,7 +958,8 @@ NX.showCourseModal = async function (code, teacherId) {
     if (rows === null) {
       ratingHtml = '<div style="font-size:11px;color:#ee4d4d;padding:0 0 8px">官方教评获取失败（教务会话或网络），稍后重试</div>';
     } else if (rows.length === 0) {
-      ratingHtml = '<div style="font-size:11px;color:var(--nx-ink-soft);padding:0 0 8px">该课暂无官方教评数据</div>';
+      const uncovered = !NX.isRatingCovered(code);
+      ratingHtml = '<div style="font-size:11px;color:var(--nx-ink-soft);padding:0 0 8px">' + (uncovered ? '外校课程不在本校教评范围' : '该课暂无官方教评数据') + '</div>';
     } else {
       ratingHtml = '<div style="border-bottom:1px solid var(--nx-line);padding:0 0 12px;margin-bottom:4px">'
         + '<div style="font-size:13px;font-weight:600;margin:0 0 8px">官方教评 · 选课学生推荐度（1-7 分）</div>'
