@@ -664,7 +664,7 @@ NX.fetchRatings = async function (code) {
   const cacheKey = 'nx_ratings_' + sem;
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch (e) {}
-  if (code in cache) { state._ratingCache[code] = cache[code]; return cache[code]; }
+  if (code in cache && Array.isArray(cache[code]) && cache[code].length) { state._ratingCache[code] = cache[code]; console.log(NX.TAG, '[NX-rating]', code, '命中localStorage缓存', cache[code].length, '行'); return cache[code]; }   // 空条目（历史毒化）当 miss 重拉
   const url = state.BASE + '/xkBks.xgpg_xspjyxkt.do?cm=xgpg_qbkcmycdzbData&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks';
   const body = 'cm=xgpg_qbkcmycdzbShow&p_xnxq=' + encodeURIComponent(sem) + '&p_xslb=bks'
     + '&query_kkdwnm=&query_jsm=&query_kch=' + encodeURIComponent(code)
@@ -674,10 +674,13 @@ NX.fetchRatings = async function (code) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
     body, credentials: 'include',
   });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  if (!resp.ok) { console.warn(NX.TAG, '[NX-rating]', code, 'HTTP', resp.status); throw new Error('HTTP ' + resp.status); }
   const text = new TextDecoder('gbk').decode(await resp.arrayBuffer());
   let data;
-  try { data = JSON.parse(text); } catch (e) { data = null; }
+  try { data = JSON.parse(text); } catch (e) {
+    console.warn(NX.TAG, '[NX-rating]', code, '非JSON响应（前120字）:', text.replace(/<[^>]+>/g, ' ').trim().slice(0, 120));
+    throw new Error('教评接口返回非JSON（会话或接口异常）');   // 抛错：批量层记 tried 本会话不重打；绝不把异常页缓存成「无数据」
+  }
   const out = [];
   if (data && Array.isArray(data.rows)) {
     for (const row of data.rows) {
@@ -692,9 +695,11 @@ NX.fetchRatings = async function (code) {
       });
     }
   }
-  cache[code] = out;
   state._ratingCache[code] = out;
-  try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+  if (out.length) {
+    cache[code] = out;
+    try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+  }
   return out;
 };
 
@@ -713,8 +718,11 @@ NX.fetchRatingsBatch = function (codes) {
     for (;;) {
       const code = queue.shift();
       if (!code) break;
-      try { state._ratingCache[code] = await NX.fetchRatings(code); }
-      catch (e) { state._ratingTried.add(code); console.warn(NX.TAG, 'rating', code, e.message); }
+      try {
+        state._ratingCache[code] = await NX.fetchRatings(code);
+        console.log(NX.TAG, '[NX-rating]', code, '→', (state._ratingCache[code] || []).length, '位教师');
+      }
+      catch (e) { state._ratingTried.add(code); console.warn(NX.TAG, '[NX-rating]', code, '失败:', e.message); }
       // 原地更新徽章（不整列表重渲——innerHTML 重建会丢滚动位置，
       // 且无参 renderCourses() 会把 _lastRendered 打成 [] 制造静默死循环）
       try { NX.updateRatingBadges(); } catch (e) {}

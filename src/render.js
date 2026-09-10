@@ -302,6 +302,7 @@ NX.updateRatingBadges = function () {
   });
 };
 
+
 NX.renderMoreCourses = function () {
   const { state, courseCardHtml } = NX;
   const { renderList, renderCursor, renderSentinel, renderCtx, renderObserver } = state;
