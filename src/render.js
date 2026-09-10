@@ -38,19 +38,20 @@ NX.tbBadgeHtml = function (c) {
   return '<button type="button" class="nx-tb-badge ' + lv + '" data-code="' + NX.esc(c.code) + '" data-seq="' + NX.esc(c.seq || '0') + '" title="THU选课社区评分 · 点击查看全部点评">★' + a.toFixed(1) + '<i>' + e.count + '评</i></button>';
 };
 
-// ─── 官方教评徽章（#31：教务 xgpg 学生评教，1-7 分制；教师匹配择优）───
-// ≥6 绿 · 5~5.9 琥珀 · <5 红；title 带完整分布摘要
-NX.xkBadgeHtml = function (c) {
-  const m = NX.ratingOf(c.code, c.teacher);
-  if (!m || !m.total) return '';
-  const a = m.average;
-  const lv = a >= 6 ? 'lv-hi' : a >= 5 ? 'lv-mid' : 'lv-bad';
-  const dist = m.distribution.map((v, i) => (i + 1) + '分:' + v).join(' ');
-  const title = NX.esc('官方教评 · ' + m.teacher + '：均分 ' + a.toFixed(2) + ' / 7 · ' + m.total + ' 人评分 · 高分率 ' + (m.highRatio * 100).toFixed(0) + '%\n' + dist);
-  return '<button type="button" class="nx-tb-badge ' + lv + ' nx-jp-badge" data-code="' + NX.esc(c.code) + '" data-seq="' + NX.esc(c.seq || '0') + '" title="' + title + '">教' + a.toFixed(1) + '<i>' + m.total + '评</i></button>';
-};
+// 【特性冻结 2026-09-10】官方教评（#31）暂停：xgpg 端点对登录会话全 500（无登录态 curl 正常）。
+// // ─── 官方教评徽章（#31：教务 xgpg 学生评教，1-7 分制；教师匹配择优）───
+// // ≥6 绿 · 5~5.9 琥珀 · <5 红；title 带完整分布摘要
+// NX.xkBadgeHtml = function (c) {
+//   const m = NX.ratingOf(c.code, c.teacher);
+//   if (!m || !m.total) return '';
+//   const a = m.average;
+//   const lv = a >= 6 ? 'lv-hi' : a >= 5 ? 'lv-mid' : 'lv-bad';
+//   const dist = m.distribution.map((v, i) => (i + 1) + '分:' + v).join(' ');
+//   const title = NX.esc('官方教评 · ' + m.teacher + '：均分 ' + a.toFixed(2) + ' / 7 · ' + m.total + ' 人评分 · 高分率 ' + (m.highRatio * 100).toFixed(0) + '%\n' + dist);
+//   return '<button type="button" class="nx-tb-badge ' + lv + ' nx-jp-badge" data-code="' + NX.esc(c.code) + '" data-seq="' + NX.esc(c.seq || '0') + '" title="' + title + '">教' + a.toFixed(1) + '<i>' + m.total + '评</i></button>';
+// };
 
-// ─── Course Card Rendering ────────────────────────────────────
+// // ─── Course Card Rendering ────────────────────────────────────
 // 渐进渲染：只渲染视口内+预载距离的卡片（原实现一次 innerHTML 全量 6000+ 卡，
 // 数十万 DOM 节点 + 每按钮闭包，是内存占用巨大/卡顿的主因）
 NX.RENDER_CHUNK = 80;
@@ -174,7 +175,7 @@ NX.courseCardHtml = function (c, ctx) {
         '<button class="nx-stage-btn nx-add-stage" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '"' + (inStage ? ' disabled' : '') + '>' + (inStage ? '已暂存' : '暂存') + '</button>';
     }
     return '<div class="nx-card' + (c.selected ? ' nx-selected' : '') + '" data-code="' + esc(c.code) + '" data-seq="' + esc(c.seq || '0') + '" data-tid="' + esc(c.teacherId || '') + '">' +
-      '<div class="nx-card-head"><span class="nx-card-name">' + esc(c.name) + '</span>' + NX.tbBadgeHtml(c) + NX.xkBadgeHtml(c) + '<span class="nx-card-credit">' + c.credits + '学分</span></div>' +
+      '<div class="nx-card-head"><span class="nx-card-name">' + esc(c.name) + '</span>' + NX.tbBadgeHtml(c) /* + NX.xkBadgeHtml(c) 教评#31冻结 */ + '<span class="nx-card-credit">' + c.credits + '学分</span></div>' +
       '<div style="font-size:11px;color:#9aa1ac;margin-bottom:3px">' + esc(c.code) + (c.seq ? ' · ' + esc(c.seq) + '课序' : '') + '</div>' +
       '<div class="nx-tags">' + tags.join('') + '</div>' +
       (isQueuePhase && (qd || cand) ? queueInfoHtml : volHtml + compHtml + currentProbHtml + probHtml) + conflictHtml + noteHtml +
@@ -252,7 +253,7 @@ NX.renderCourses = function (list) {
   const $ = state.$;
   const el = $('nextthuxk-list');
   if (!el) return;
-  state._lastRendered = list || [];   // 教评批量拉的课号源（filterCourses 消费）
+  // state._lastRendered = list || [];   // 【教评#31冻结】唯一用途是教评批量拉号，已停
   if (state.renderObserver) { state.renderObserver.disconnect(); state.renderObserver = null; }
   state.renderList = list;
   state.renderCursor = 0;
@@ -273,40 +274,40 @@ NX.renderCourses = function (list) {
   }, { root: el, rootMargin: '800px' });
   io.observe(sentinel);
   state.renderObserver = io;
-  // 官方教评（#31）：本批渲染的课号进抓取队列（内存/localStorage 双缓存去重、
-  // 500ms 间隔顺序抓）。渐进追加的卡片渲染时缓存多半已就位，直接出徽章。
-  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(list.slice(0, 60).map(x => x.code)); } catch (e) {}
+  // 【教评#31冻结】renderCourses 触发批量抓取
+  // try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(list.slice(0, 60).map(x => x.code)); } catch (e) {}
 };
 
-// 教评徽章原地更新：评分逐门到位后只改徽章节点，不重建列表（保滚动位置）。
-NX.updateRatingBadges = function () {
-  const state = NX.state;
-  const el = state.$ && state.$('nextthuxk-list');
-  if (!el) return;
-  const src = state.allCourses || [];
-  const renderList = state.renderList || [];
-  el.querySelectorAll('.nx-card[data-code]').forEach(card => {
-    const code = card.dataset.code;
-    const seq = String(card.dataset.seq || '0');
-    const c = src.find(x => x.code === code && String(x.seq || '0') === seq)
-      || renderList.find(x => x.code === code && String(x.seq || '0') === seq);
-    if (!c) return;
-    const head = card.querySelector('.nx-card-head');
-    if (!head) return;
-    const html = NX.xkBadgeHtml(c);
-    const old = head.querySelector('.nx-jp-badge');
-    if (!html) { if (old) old.remove(); return; }
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    const fresh = tmp.firstElementChild;
-    if (!fresh) return;
-    if (old) old.replaceWith(fresh);
-    else {
-      const credit = head.querySelector('.nx-card-credit');
-      head.insertBefore(fresh, credit || null);
-    }
-  });
-};
+// 【特性冻结 2026-09-10】官方教评（#31）暂停：xgpg 端点对登录会话全 500（无登录态 curl 正常）。
+// // 教评徽章原地更新：评分逐门到位后只改徽章节点，不重建列表（保滚动位置）。
+// NX.updateRatingBadges = function () {
+//   const state = NX.state;
+//   const el = state.$ && state.$('nextthuxk-list');
+//   if (!el) return;
+//   const src = state.allCourses || [];
+//   const renderList = state.renderList || [];
+//   el.querySelectorAll('.nx-card[data-code]').forEach(card => {
+//     const code = card.dataset.code;
+//     const seq = String(card.dataset.seq || '0');
+//     const c = src.find(x => x.code === code && String(x.seq || '0') === seq)
+//       || renderList.find(x => x.code === code && String(x.seq || '0') === seq);
+//     if (!c) return;
+//     const head = card.querySelector('.nx-card-head');
+//     if (!head) return;
+//     const html = NX.xkBadgeHtml(c);
+//     const old = head.querySelector('.nx-jp-badge');
+//     if (!html) { if (old) old.remove(); return; }
+//     const tmp = document.createElement('div');
+//     tmp.innerHTML = html;
+//     const fresh = tmp.firstElementChild;
+//     if (!fresh) return;
+//     if (old) old.replaceWith(fresh);
+//     else {
+//       const credit = head.querySelector('.nx-card-credit');
+//       head.insertBefore(fresh, credit || null);
+//     }
+//   });
+// };
 
 
 NX.renderMoreCourses = function () {
@@ -318,9 +319,8 @@ NX.renderMoreCourses = function () {
   const parts = [];
   for (let i = renderCursor; i < end; i++) parts.push(courseCardHtml(renderList[i], renderCtx));
   renderSentinel.insertAdjacentHTML('beforebegin', parts.join(''));
-  // 本批课号进教评队列（滚动渐进渲染的课也要拉——此前只有 renderCourses 前 60
-  // 门进队，滚出来的课永远不出教评徽章）
-  try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(renderList.slice(renderCursor, end).map(x => x.code)); } catch (e) {}
+  // 【教评#31冻结】滚动渐进渲染进队
+  // try { if (typeof NX.fetchRatingsBatch === 'function') NX.fetchRatingsBatch(renderList.slice(renderCursor, end).map(x => x.code)); } catch (e) {}
   state.renderCursor = end;
   if (end >= renderList.length && renderObserver) renderObserver.disconnect();
 };
@@ -960,33 +960,33 @@ NX.showCourseModal = async function (code, teacherId) {
   title.textContent = c ? c.name + '（' + code + '）' : code;
   body.innerHTML = '<div class="nx-modal-loading"><span class="nx-spin"></span> 正在加载课程简介…</div>';
   mask.classList.add('show');
-  // 官方教评（#31）：简介弹窗顶部教师分布条（教师粒度 1-7 分）
+  // 【教评#31冻结】弹窗教师分布条整块（保留 ratingHtml 变量声明——下方模板引用它）
   let ratingHtml = '';
-  try {
-    const rows = await NX.fetchRatings(code).catch(() => null);
-    if (rows === null) {
-      ratingHtml = '<div style="font-size:11px;color:#ee4d4d;padding:0 0 8px">官方教评获取失败（教务会话或网络），稍后重试</div>';
-    } else if (rows.length === 0) {
-      const uncovered = !NX.isRatingCovered(code);
-      ratingHtml = '<div style="font-size:11px;color:var(--nx-ink-soft);padding:0 0 8px">' + (uncovered ? '外校课程不在本校教评范围' : '该课暂无官方教评数据') + '</div>';
-    } else {
-      ratingHtml = '<div style="border-bottom:1px solid var(--nx-line);padding:0 0 12px;margin-bottom:4px">'
-        + '<div style="font-size:13px;font-weight:600;margin:0 0 8px">官方教评 · 选课学生推荐度（1-7 分）</div>'
-        + rows.map(r => {
-          const color = r.average >= 6 ? '#07c160' : r.average >= 5 ? '#ff9f1a' : '#ee4d4d';
-          const bar = r.distribution.map((v, i) => v > 0
-            ? '<div title="' + (i + 1) + '分：' + v + '人" style="width:' + (v / Math.max(1, r.total) * 100).toFixed(2) + '%;height:8px;background:' + (i >= 5 ? '#07c160' : i >= 3 ? '#ff9f1a' : '#ee4d4d') + ';opacity:' + (i >= 5 ? '.85' : i >= 3 ? '.75' : '.65') + '"></div>'
-            : '').join('');
-          return '<div style="margin-bottom:8px">'
-            + '<div style="display:flex;align-items:baseline;gap:8px;font-size:12px">'
-            + '<span style="font-weight:600">' + NX.esc(r.teacher || '（未署名教师）') + '</span>'
-            + '<span style="color:' + color + ';font-weight:700">' + r.average.toFixed(2) + ' / 7</span>'
-            + '<span style="color:var(--nx-ink-soft)">' + r.total + ' 人评分 · 高分率 ' + (r.highRatio * 100).toFixed(0) + '%</span></div>'
-            + '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:4px;background:var(--nx-line)">' + bar + '</div></div>';
-        }).join('')
-        + '<div style="font-size:11px;color:var(--nx-ink-soft);margin-top:4px">数据来自教务 xgpg 学生评教；绿=6/7 分，黄=4/5 分，红=1-3 分</div></div>';
-    }
-  } catch (e) {}
+//   // try {
+//     const rows = await NX.fetchRatings(code).catch(() => null);
+//     if (rows === null) {
+//       ratingHtml = '<div style="font-size:11px;color:#ee4d4d;padding:0 0 8px">官方教评获取失败（教务会话或网络），稍后重试</div>';
+//     } else if (rows.length === 0) {
+//       const uncovered = !NX.isRatingCovered(code);
+//       ratingHtml = '<div style="font-size:11px;color:var(--nx-ink-soft);padding:0 0 8px">' + (uncovered ? '外校课程不在本校教评范围' : '该课暂无官方教评数据') + '</div>';
+//     } else {
+//       ratingHtml = '<div style="border-bottom:1px solid var(--nx-line);padding:0 0 12px;margin-bottom:4px">'
+//         + '<div style="font-size:13px;font-weight:600;margin:0 0 8px">官方教评 · 选课学生推荐度（1-7 分）</div>'
+//         + rows.map(r => {
+//           const color = r.average >= 6 ? '#07c160' : r.average >= 5 ? '#ff9f1a' : '#ee4d4d';
+//           const bar = r.distribution.map((v, i) => v > 0
+//             ? '<div title="' + (i + 1) + '分：' + v + '人" style="width:' + (v / Math.max(1, r.total) * 100).toFixed(2) + '%;height:8px;background:' + (i >= 5 ? '#07c160' : i >= 3 ? '#ff9f1a' : '#ee4d4d') + ';opacity:' + (i >= 5 ? '.85' : i >= 3 ? '.75' : '.65') + '"></div>'
+//             : '').join('');
+//           return '<div style="margin-bottom:8px">'
+//             + '<div style="display:flex;align-items:baseline;gap:8px;font-size:12px">'
+//             + '<span style="font-weight:600">' + NX.esc(r.teacher || '（未署名教师）') + '</span>'
+//             + '<span style="color:' + color + ';font-weight:700">' + r.average.toFixed(2) + ' / 7</span>'
+//             + '<span style="color:var(--nx-ink-soft)">' + r.total + ' 人评分 · 高分率 ' + (r.highRatio * 100).toFixed(0) + '%</span></div>'
+//             + '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:4px;background:var(--nx-line)">' + bar + '</div></div>';
+//         }).join('')
+//         + '<div style="font-size:11px;color:var(--nx-ink-soft);margin-top:4px">数据来自教务 xgpg 学生评教；绿=6/7 分，黄=4/5 分，红=1-3 分</div></div>';
+//     }
+//   } catch (e) {}
   const fields = await fetchCourseDetail(teacherId, code);
   if (!fields || !Object.keys(fields).length) {
     body.innerHTML = ratingHtml + '<div class="nx-modal-loading">暂无课程简介信息</div>';

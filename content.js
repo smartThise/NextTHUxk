@@ -89,7 +89,7 @@ const HTML = `
             </div>
           </div>
     <div class="nx-header">
-      <div class="nx-logo"><span class="othu-logo" style="font-size:14px"><span class="lp">(</span><span class="word"><i>O</i><i>n</i><i>e</i></span><span></span><span class="lp"> </span><span class="tu">T</span><span class="tu">H</span><span class="tu">U</span><span class="lp">)</span></span><span>NextTHUxk</span><span id="nx-build-tag" style="font-size:9px;color:rgba(255,255,255,.35);margin-left:8px;letter-spacing:.5px">${NX.BUILD || ''}</span> <span id="nextthuxk-phase-tag" style="display:none;font-size:11px;background:rgba(47,107,255,.1);color:var(--nx-accent);padding:2px 8px;border-radius:4px;margin-left:6px"></span><span id="nextthuxk-rating-tag" title="官方教评状态（点击在控制台输出诊断）" style="display:none;font-size:11px;background:rgba(52,199,89,.1);padding:2px 8px;border-radius:4px;margin-left:6px;cursor:pointer"></span></div>
+      <div class="nx-logo"><span class="othu-logo" style="font-size:14px"><span class="lp">(</span><span class="word"><i>O</i><i>n</i><i>e</i></span><span></span><span class="lp"> </span><span class="tu">T</span><span class="tu">H</span><span class="tu">U</span><span class="lp">)</span></span><span>NextTHUxk</span><span id="nx-build-tag" style="font-size:9px;color:rgba(255,255,255,.35);margin-left:8px;letter-spacing:.5px">${NX.BUILD || ''}</span> <span id="nextthuxk-phase-tag" style="display:none;font-size:11px;background:rgba(47,107,255,.1);color:var(--nx-accent);padding:2px 8px;border-radius:4px;margin-left:6px"></span></div>
       <div style="display:flex;gap:8px;align-items:center">
         <span id="nextthuxk-cache-info" style="font-size:11px;color:var(--nx-ink-soft)"></span>
         <button id="nextthuxk-sem" class="nx-ghost-btn" title="点击修改学期"></button>
@@ -219,17 +219,18 @@ NX.ensureSiteIdentity = function () {
 // ─── Toggle ───────────────────────────────────────────────────
 function toggle(show) {
   const db = $('nextthuxk-dashboard');
-  // 教评诊断 chip：点击在控制台打全量状态（队列/缓存/预热/熔断）
-  const rTag = $('nextthuxk-rating-tag');
-  if (rTag) rTag.onclick = () => {
-    const st = NX.state;
-    console.log(NX.TAG, '[NX-rating] 诊断: SEM=' + st.SEM, '| BASE=' + st.BASE,
-      '| 熔断=' + !!st._ratingDead, '| 预热=' + (st._ratingPrimed || '未跑'),
-      '| 内存缓存=' + Object.keys(st._ratingCache || {}).length + ' 门',
-      '| 本会话已试=' + (st._ratingTried ? st._ratingTried.size : 0) + ' 门',
-      '| 队列=' + ((st._ratingQueue || []).length) + ' 门',
-      '| localStorage=' + Object.keys((() => { try { return JSON.parse(localStorage.getItem('nx_ratings_' + st.SEM) || '{}'); } catch (e) { return {}; } })()).length + ' 门');
-  };
+  // 【教评#31冻结】教评诊断 chip 整块
+//   // 教评诊断 chip：点击在控制台打全量状态（队列/缓存/预热/熔断）
+//   const rTag = $('nextthuxk-rating-tag');
+//   if (rTag) rTag.onclick = () => {
+//     const st = NX.state;
+//     console.log(NX.TAG, '[NX-rating] 诊断: SEM=' + st.SEM, '| BASE=' + st.BASE,
+//       '| 熔断=' + !!st._ratingDead, '| 预热=' + (st._ratingPrimed || '未跑'),
+//       '| 内存缓存=' + Object.keys(st._ratingCache || {}).length + ' 门',
+//       '| 本会话已试=' + (st._ratingTried ? st._ratingTried.size : 0) + ' 门',
+//       '| 队列=' + ((st._ratingQueue || []).length) + ' 门',
+//       '| localStorage=' + Object.keys((() => { try { return JSON.parse(localStorage.getItem('nx_ratings_' + st.SEM) || '{}'); } catch (e) { return {}; } })()).length + ' 门');
+//   };
   const btn = $('nextthuxk-launch');
   if (show) { db.classList.add('active'); btn.style.display = 'none'; host.style.pointerEvents = 'all'; }
   else { db.classList.remove('active'); setTimeout(() => { btn.style.display = 'flex'; }, 500); host.style.pointerEvents = 'none'; }
