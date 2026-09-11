@@ -700,16 +700,22 @@ NX.stageProbHtml = function (c) {
   const { isQueuePhase, queueDataMap, allCourses } = state;
   // 课序精确 → 课号兜底（暂存/课余量/kkxx 两套课序号对不上时概率不该消失）
   const ac = NX.courseForStage(c);
-  if (!ac) return '';
   if (isQueuePhase) {
     const qKey = c.code + '_' + NX.normSeq(c.seq);
-    const qd = queueDataMap[qKey];
+    let qd = queueDataMap[qKey];
+    // 池行合成兜底（用户实锤「暂存区不显示当前课余量，要点击跳转才能看到」）：
+    // kkxxSearch 行自带余量列，与列表卡 render.js:105 同款合成——课余量
+    // kylSearch 未覆盖/未跑到时，只要这课在池里就先亮徽章
+    if (!qd && ac && ac.capacity > 0 && ac.remaining !== undefined) {
+      qd = { qRemaining: ac.remaining, qCapacity: ac.capacity, qQueue: 0 };
+    }
     if (qd) {
       const rc = qd.qRemaining > 0 ? '#07c160' : '#ee4d4d';
       return '<div style="margin-top:2px;display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span style="background:rgba(' + (qd.qRemaining > 0 ? '52,199,89' : '255,59,48') + ',.12);color:' + rc + ';padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600">余' + qd.qRemaining + '/' + qd.qCapacity + '</span>' + (qd.qQueue > 0 ? '<span style="background:rgba(255,159,26,.12);color:#ff9f1a;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600">排队' + qd.qQueue + '人</span>' : '') + '</div>';
     }
     return '';
   }
+  if (!ac) return '';
   const bf = c.baseFlag || baseFlag(ac);
   return fullProbGrid(ac, bf).replace(/margin-top:3px/, 'margin-top:2px');
 };

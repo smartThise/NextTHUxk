@@ -340,6 +340,7 @@ NX.launch = async function launch() {
           const q = state.queueDataMap[c.code + '_' + NX.normSeq(c.seq)];
           if (q) { c.available = q.qRemaining > 0; if (q.qRemaining > 0) c.remaining = q.qRemaining; c.capacity = q.qCapacity; }
         });
+        try { NX.renderStageCart(); } catch (e) {}   // 暂存余量徽章同步点亮（预选分支有，队列分支漏——用户实锤）
       } else {
         // 非队列阶段（预选/志愿期）：池内按需志愿统计 → 概率网格数据源
         // （OneTHU dev 的 getXkVolunteer 是死码——这里真接上；池内逐门单查，

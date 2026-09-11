@@ -578,6 +578,7 @@ NX.refreshSelected = async function () {
     }
   } catch (e) { /* 保持现有余量数据 */ }
   filterCourses();
+  try { NX.renderStageCart(); } catch (e) {}   // 暂存余量徽章随刷新点亮（提交选课后余量必变）
   renderPreviewTT(
     allCourses.filter(c => c.selected).concat(state.candidateCourses.filter(cc => !allCourses.some(ac => ac.selected && ac.code === cc.code))),
     '当前已选'

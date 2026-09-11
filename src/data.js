@@ -1230,8 +1230,11 @@ NX.fetchQueueData = async function (courses) {
     const token = (firstHtml.match(/name="token"\s+value="([^"]+)"/) || [])[1] || '';
     const formAction = BASE + '/xkBks.vxkBksJxjhBs.do';
     if (token) {
-      // 池内课程逐门精确查（p_kch）：1 课 1 请求，绝不翻页连发
-      const codes = [...new Set((courses || []).map(c => String(c.code || '').trim()).filter(Boolean))];
+      // 池内课程逐门精确查（p_kch）：1 课 1 请求，绝不翻页连发。
+      // 查询集并入暂存课（用户实锤「暂存区不显示当前课余量，要点跳转才能看到」：
+      // 暂存课不在搜索池里就永远不进 kyl 查询集，余量徽章恒空）。
+      const coursesAll = (courses || []).concat((state.stageCart || []));
+      const codes = [...new Set(coursesAll.map(c => String(c.code || '').trim()).filter(Boolean))];
       const kylPost = async code => {
         const body = new URLSearchParams({
           m: 'kylSearch', page: '1', token,
