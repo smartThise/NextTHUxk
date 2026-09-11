@@ -927,7 +927,7 @@ NX.renderDrafts = function () {
       const d = savedDrafts[idx];
       if (!d) return;
       const stageCart = state.stageCart;
-      const same = stageCart.length === d.courses.length && stageCart.every(s => d.courses.some(c => c.code === s.code && String(c.seq || '0') === String(s.seq || '0')));
+      const same = stageCart.length === d.courses.length && stageCart.every(s => d.courses.some(c => c.code === s.code && NX.normSeq(c.seq || '0') === NX.normSeq(s.seq || '0')));   // 归一：前导零两套编号（tt-fix2 同族）
       if (stageCart.length && !same && !confirm('暂存区已有 ' + stageCart.length + ' 门课程，载入草稿「' + d.name + '」将替换它们，继续？')) {
         renderPreviewTT(d.courses, '草稿「' + d.name + '」预览');
         return;
