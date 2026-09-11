@@ -7,7 +7,7 @@ var NX = NX || {};
 // 统一课程 JSON：带全量新字段（志愿统计/余量/类型/候补/暂存/外校说明列），
 // aiSearch 与 callAI 共用——「选课 json 提供」的单一真相。
 NX.aiCourseJson = function (c) {
-  const staged = (NX.state.stageCart || []).some(s => s.code === c.code && String(s.seq || '0') === String(c.seq || '0'));
+  const staged = (NX.state.stageCart || []).some(s => s.code === c.code && NX.normSeq(s.seq || '0') === NX.normSeq(c.seq || '0'));
   const j = {
     name: c.name, code: c.code, seq: c.seq || '0', credits: c.credits,
     teacher: c.teacher || '', department: c.department || '',
@@ -149,7 +149,7 @@ NX.aiSearch = async function () {
     } else {
       results.innerHTML = (result.summary ? '<div class="nx-st ok" style="margin-bottom:8px">' + esc(result.summary) + '</div>' : '')
         + recs.map(r => {
-          const course = allCourses.find(c => c.code === r.code && String(c.seq || '0') === String(r.seq || '0'));
+          const course = allCourses.find(c => c.code === r.code && NX.normSeq(c.seq || '0') === NX.normSeq(r.seq || '0'));
           const isConflict = r.conflict || (course && findPreviewConflicts(course).length > 0);
           const borderColor = isConflict ? '#ff9500' : r.conflict ? '#ff3b30' : '#34c759';
           const conflictHtml = isConflict ? '<div style="font-size:10px;color:#ff9500;margin-top:4px">与' + esc(r.conflictWith || '预览课表') + '时间冲突</div>' : '';
@@ -162,7 +162,7 @@ NX.aiSearch = async function () {
         }).join('');
       results.querySelectorAll('.nx-stage-btn').forEach(b => {
         b.onclick = () => {
-          const ac = allCourses.find(c => c.code === b.dataset.code && String(c.seq || '0') === String(b.dataset.seq || '0'));
+          const ac = allCourses.find(c => c.code === b.dataset.code && NX.normSeq(c.seq || '0') === NX.normSeq(b.dataset.seq || '0'));
           if (ac) addToStage(ac.code, ac.seq, baseFlag(ac), 3);
         };
       });

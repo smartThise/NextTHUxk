@@ -278,7 +278,7 @@ var NX = NX || {};
     const titleEl = $('nextthuxk-modal-title');
     const body = $('nextthuxk-modal-body');
     if (!mask || !body) return;
-    const c = NX.getCourse ? NX.getCourse(code, seq) : (state.allCourses || []).find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+    const c = NX.getCourse ? NX.getCourse(code, seq) : (state.allCourses || []).find(x => x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0'));
     if (!c) return;
     titleEl.textContent = c.name + ' · 社区点评';
     body.innerHTML = '<div class="nx-modal-loading"><span class="nx-spin"></span> 正在加载点评…</div>';

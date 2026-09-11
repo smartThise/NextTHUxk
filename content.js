@@ -319,7 +319,7 @@ NX.launch = async function launch() {
     // 核心池 = 已选 + 候补（预览/暂存/冲突/AI 的基础；搜索结果运行时带标记渲染）
     const pool = selectedCourses.map(c => ({ ...c, selected: true }));
     state.candidateCourses.forEach(c => {
-      if (!pool.some(p => p.code === c.code && String(p.seq) === String(c.seq))) pool.push({ ...c, isCandidate: true });
+      if (!pool.some(p => p.code === c.code && NX.normSeq(p.seq) === NX.normSeq(c.seq))) pool.push({ ...c, isCandidate: true });
     });
     await NX.knoteLoad().catch(e => console.warn(TAG, 'knote:', e));   // 课表时间持久缓存先于首渲
     state.allCourses = pool;
@@ -382,7 +382,7 @@ NX.launch = async function launch() {
 // 暂存行按需补拉：暂存课不在池（重载后池只含已选/候补）→ 概率/时间全断。
 // 必须在 renderStageAndDrafts 之后调用（stageCart 那时才从 storage 加载完）。
 NX.backfillStageRows = function () {
-  const stageMiss = (state.stageCart || []).filter(s => !state.allCourses.some(ac => ac.code === s.code && String(ac.seq || '0') === String(s.seq || '0')));
+  const stageMiss = (state.stageCart || []).filter(s => !state.allCourses.some(ac => ac.code === s.code && NX.normSeq(ac.seq || '0') === NX.normSeq(s.seq || '0')));
   if (!stageMiss.length) return;
   (async () => {
     for (let i = 0; i < stageMiss.length; i += 5) {
@@ -545,7 +545,7 @@ NX.syncQueueAndVol = async function () {
   state.allCourses.forEach(c => { c.isCandidate = candKeys.has(c.code + '_' + String(c.seq || '0')); });
   // 新候选入池（kbSearch 兜底来的不在池里——不入池则队列 chip 可见性断）
   state.candidateCourses.forEach(c => {
-    if (!state.allCourses.some(ac => ac.code === c.code && String(ac.seq || '0') === String(c.seq || '0'))) state.allCourses.push({ ...c, isCandidate: true });
+    if (!state.allCourses.some(ac => ac.code === c.code && NX.normSeq(ac.seq || '0') === NX.normSeq(c.seq || '0'))) state.allCourses.push({ ...c, isCandidate: true });
   });
   // 池行余量合并（同 launch）
   state.allCourses.forEach(c => {

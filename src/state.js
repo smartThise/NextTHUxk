@@ -154,8 +154,8 @@ NX.renderQueueSection = function () {
       const r = await dropCourse(btn.dataset.code, btn.dataset.seq);
       if (!r || !r.ok) { btn.disabled = false; showXkResult(r || { ok: false, msg: '退队失败' }); return; }
       // 退队成功：从候选池移除并回刷（getPreviewCourses 候选数版本号自动失效）
-      state.candidateCourses = state.candidateCourses.filter(c => !(c.code === btn.dataset.code && String(c.seq || '0') === String(btn.dataset.seq)));
-      state.allCourses = state.allCourses.filter(c => !(c.isCandidate && c.code === btn.dataset.code && String(c.seq || '0') === String(btn.dataset.seq)));
+      state.candidateCourses = state.candidateCourses.filter(c => !(c.code === btn.dataset.code && NX.normSeq(c.seq || '0') === NX.normSeq(btn.dataset.seq)));
+      state.allCourses = state.allCourses.filter(c => !(c.isCandidate && c.code === btn.dataset.code && NX.normSeq(c.seq || '0') === NX.normSeq(btn.dataset.seq)));
       NX.rebuildCourseMap();
       NX.renderQueueSection();
       NX.filterCourses();
@@ -587,9 +587,9 @@ NX.addToCurrentDraft = function (code, seq, flag, zy) {
   const $ = state.$;
   const d = savedDrafts[previewDraftIdx];
   if (!d) { showXkResult({ ok: false, msg: '先在草稿列表点「预览 & 修改」选中一个草稿' }); return; }
-  const c = allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+  const c = allCourses.find(x => x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0'));
   if (!c) return;
-  if (d.courses.some(s => s.code === code && String(s.seq || '0') === String(seq || '0'))) {
+  if (d.courses.some(s => s.code === code && NX.normSeq(s.seq || '0') === NX.normSeq(seq || '0'))) {
     showXkResult({ ok: false, msg: '该课程已在草稿「' + d.name + '」中' }); return;
   }
   d.courses.push({
@@ -608,10 +608,10 @@ NX.addToCurrentDraft = function (code, seq, flag, zy) {
 NX.addToStage = function (code, seq, flag, zy) {
   const { state, store, showXkResult, baseFlag, renderStageCart, filterCourses } = NX;
   const { allCourses, stageCart } = state;
-  const c = allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+  const c = allCourses.find(x => x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0'));
   if (!c) return;
   NX.knoteRemember(c.code, c.seq, c.note || c.xkTextNote || '', c.time || '');   // 暂存的时候把时间暂存起来
-  if (stageCart.some(s => s.code === code && String(s.seq) === String(seq || '0'))) {
+  if (stageCart.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq || '0'))) {
     showXkResult({ ok: false, msg: '该课程已在暂存区' }); return;
   }
   stageCart.push({
@@ -745,7 +745,7 @@ NX.importToStage = function (jsonStr) {
     if (!data.courses || !Array.isArray(data.courses)) throw new Error('数据格式错误');
     let added = 0;
     data.courses.forEach(c => {
-      if (!stageCart.some(s => s.code === c.code && String(s.seq) === String(c.seq))) {
+      if (!stageCart.some(s => s.code === c.code && NX.normSeq(s.seq) === NX.normSeq(c.seq))) {
         stageCart.push({
           code: c.code, seq: c.seq || '0', name: c.name || '', teacher: c.teacher || '',
           time: c.time || '', credits: c.credits || 0, flag: c.flag || 'bx', zy: c.zy || 3,
@@ -836,13 +836,13 @@ NX.confirmDrop = function (name, keyText) {
 NX.canAdjustZy = function (code, seq, targetZy) {
   const { state, zyTypeOf, ZY_LIMITS } = NX;
   const { allCourses } = state;
-  const course = allCourses.find(c => c.code === code && String(c.seq || '0') === String(seq || '0'));
+  const course = allCourses.find(c => c.code === code && NX.normSeq(c.seq || '0') === NX.normSeq(seq || '0'));
   if (!course) return false;
   const zt = zyTypeOf(course);
   let count = 0;
   allCourses.forEach(c => {
     if (!c.selected) return;
-    if (c.code === code && String(c.seq || '0') === String(seq || '0')) return;
+    if (c.code === code && NX.normSeq(c.seq || '0') === NX.normSeq(seq || '0')) return;
     if (zyTypeOf(c) !== zt) return;
     if (c.zy === targetZy) count++;
   });
@@ -857,7 +857,7 @@ NX.handlePreviewRemove = async function (code, seq) {
   const { allCourses, stageCart, savedDrafts, previewMode, previewDraftIdx } = state;
   const $ = state.$;
   if (previewMode === 'selected') {
-    const c = allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq));
+    const c = allCourses.find(x => x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq));
     const name = c?.name || code;
     // 课表块上的退选同样是真实退课：走玻璃警告弹窗（用户令）
     const go = await NX.confirmDrop(name, code + '_' + String(seq || '0'));
@@ -870,7 +870,7 @@ NX.handlePreviewRemove = async function (code, seq) {
       NX.renderPlan(state.planData);
     }
   } else if (previewMode === 'stage') {
-    const idx = stageCart.findIndex(s => s.code === code && String(s.seq) === String(seq));
+    const idx = stageCart.findIndex(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq));
     const name = idx >= 0 ? stageCart[idx].name : code;
     if (!confirm('从暂存区移除「' + name + '」？')) return;
     removeFromStage(idx);
@@ -878,7 +878,7 @@ NX.handlePreviewRemove = async function (code, seq) {
   } else if (previewMode === 'draft') {
     const draft = savedDrafts[previewDraftIdx];
     if (!draft) return;
-    const idx = draft.courses.findIndex(s => s.code === code && String(s.seq) === String(seq));
+    const idx = draft.courses.findIndex(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq));
     const name = idx >= 0 ? draft.courses[idx].name : code;
     if (!confirm('从草稿移除「' + name + '」？')) return;
     draft.courses.splice(idx, 1);

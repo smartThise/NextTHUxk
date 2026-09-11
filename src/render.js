@@ -190,9 +190,9 @@ NX.courseCardHtml = function (c, ctx) {
 // 通用课程查找（优先 Map 索引，回退线性扫）
 NX.getCourse = function (code, seq) {
   const { courseMap, allCourses } = NX.state;
-  const k = code + '_' + String(seq || '0');
+  const k = code + '_' + NX.normSeq(seq || '0');   // 键归一（与 rebuildCourseMap 同域）
   if (courseMap) { const hit = courseMap.get(k); if (hit) return hit; }
-  return allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+  return allCourses.find(x => x.code === code && NX.normSeq(x.seq || '0') === k.split('_')[1]);
 };
 
 // 暂存/草稿行 → 池内数据源（Issue #33 定案）：课序精确优先；兜底必须「教师一致」
@@ -244,7 +244,7 @@ NX._courseForStageCore = function (c, pool) {
 
 NX.rebuildCourseMap = function () {
   const m = new Map();
-  for (const c of NX.state.allCourses) m.set(c.code + '_' + (c.seq || '0'), c);
+  for (const c of NX.state.allCourses) m.set(c.code + '_' + NX.normSeq(c.seq || '0'), c);   // 键归一：两套前导零编号互通
   NX.state.courseMap = m;
 };
 
@@ -385,7 +385,7 @@ NX.bindCardDelegation = function (el) {
       // 真实退课必须先过玻璃警告弹窗（用户令：有人没意识到退选是真的退了）
       const origText = btn.textContent;
       const code = btn.dataset.code, seq = btn.dataset.seq;
-      const row = NX.state.allCourses.find(x => x.code === code && String(x.seq || '0') === String(seq || '0'));
+      const row = NX.state.allCourses.find(x => x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0'));
       const nm = row ? row.name : code;
       NX.confirmDrop(nm, code + '_' + String(seq || '0')).then(go => {
         if (!go) return;
@@ -397,9 +397,9 @@ NX.bindCardDelegation = function (el) {
             // 仍在屏上，退选按钮可再点，二连击会弹「选中表示删除」惊吓窗）
             if (res.ok) {
               NX.state.allCourses.forEach(x => {
-                if (x.code === code && String(x.seq || '0') === String(seq || '0')) { x.selected = false; x.isCandidate = false; x.zy = 0; }
+                if (x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0')) { x.selected = false; x.isCandidate = false; x.zy = 0; }
               });
-              if (NX.state.candidateCourses) NX.state.candidateCourses = NX.state.candidateCourses.filter(x => !(x.code === code && String(x.seq || '0') === String(seq || '0')));
+              if (NX.state.candidateCourses) NX.state.candidateCourses = NX.state.candidateCourses.filter(x => !(x.code === code && NX.normSeq(x.seq || '0') === NX.normSeq(seq || '0')));
               try { NX.filterCourses(); } catch (e) { console.warn(NX.TAG, 're-render after drop:', e); }
             }
             return res.ok ? refreshSelected() : null;
@@ -466,7 +466,7 @@ NX.renderPreviewTT = function (courses, label) {
     let cellColor = '', probLabel = '', probBgColor = '';
     const qKey = c.code + '_' + NX.normSeq(c.seq);
     const qd = queueDataMap[qKey];
-    const cand = candidateCourses.find(cc => cc.code === c.code && String(cc.seq) === String(c.seq || '0'));
+    const cand = candidateCourses.find(cc => cc.code === c.code && NX.normSeq(cc.seq) === NX.normSeq(c.seq || '0'));
     if (c.manual) {
       cellColor = '#8b5cf6'; probLabel = '自定义'; probBgColor = 'rgba(139,92,246,.14)';
     } else if (c.isCandidate && cand && cand.myPos) {
@@ -1170,9 +1170,9 @@ NX.filterCourses = function () {
     list = allCourses;
     if (f === 'selected') {
       const seen = new Set();
-      const candKeys = new Set(candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+      const candKeys = new Set(candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
       list = list.filter(c => {
-        if (!c.selected && !c.isCandidate && !candKeys.has(c.code + '_' + (c.seq || '0'))) return false;
+        if (!c.selected && !c.isCandidate && !candKeys.has(c.code + '_' + NX.normSeq(c.seq || '0'))) return false;
         const k = c.code + '_' + (c.seq || '0');
         if (seen.has(k)) return false;
         seen.add(k); return true;
@@ -1407,15 +1407,15 @@ NX.loadSearchPageTo = async function (target) {
   if (to <= loaded) return;
   state._loadingAll = true;
   try {
-    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + (c.seq || '0')));
-    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
+    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
     for (let p = loaded + 1; p <= to; p++) {
       const res = await NX.serverSearch({ ...NX.buildSearchOpts(), page: p });
       const rows = res.rows || [];
       if (!rows.length) break;
-      const seen = new Set((state._searchRows || []).map(c => c.code + '_' + (c.seq || '0')));
+      const seen = new Set((state._searchRows || []).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
       rows.forEach(r => {
-        const k = r.code + '_' + (r.seq || '0');
+        const k = r.code + '_' + NX.normSeq(r.seq || '0');
         r.selected = selKeys.has(k);
         r.isCandidate = candKeys.has(k);
         if (!seen.has(k)) { seen.add(k); (state._searchRows = state._searchRows || []).push(r); }
@@ -1441,10 +1441,10 @@ NX.loadAllSearch = async function () {
     const opts = NX.buildSearchOpts();
     opts.forceAll = true;
     const res = await NX.serverSearchStorm(opts);
-    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + (c.seq || '0')));
-    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+    const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));   // 键归一：已选 '1' vs 搜索行 '01' → #43 标记丢失
+    const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
     (res.rows || []).forEach(r => {
-      const k = r.code + '_' + (r.seq || '0');
+      const k = r.code + '_' + NX.normSeq(r.seq || '0');
       r.selected = selKeys.has(k);
       r.isCandidate = candKeys.has(k);
     });
@@ -1611,7 +1611,7 @@ NX.highlightJumpTarget = function () {
   const list = state.renderList || [];
   const jt = state._jumpTeacher || '';
   const codeSeq = c => String(c.code || '') === String(code) &&
-    String(c.seq || '0') === String(seq);
+    NX.normSeq(c.seq || '0') === NX.normSeq(seq);   // 键归一：课表块 seq '1' vs 搜索行 '01' → #33 跳转落空
   const tOk = c => !jt || (!!c.teacher &&
     (c.teacher === jt || c.teacher.includes(jt) || jt.includes(c.teacher)));
   const time = state._jumpTime || '';
@@ -1640,8 +1640,8 @@ NX.highlightJumpTarget = function () {
     // 中途吞意图——#33 三层实锤全在这条管道上）。搜索栏已是该课号，sig 一致
     // 不会触发重搜；用户之后改词 → sigChanged 正常作废
     const poolRows = (state.allCourses || []).filter(x => x.code === code);
-    const poolHit = poolRows.find(x => String(x.seq || '0') === String(seq) && tOk(x)) ||
-      poolRows.find(x => String(x.seq || '0') === String(seq));
+    const poolHit = poolRows.find(x => NX.normSeq(x.seq || '0') === NX.normSeq(seq) && tOk(x)) ||
+      poolRows.find(x => NX.normSeq(x.seq || '0') === NX.normSeq(seq));
     if (poolHit && poolRows.length > 1 && !state._jumpPoolTried) {
       state._jumpPoolTried = true;   // 只试一次：重入再 miss 走放弃路径，绝不递归
       try {
@@ -1682,8 +1682,8 @@ NX.highlightJumpTarget = function () {
   requestAnimationFrame(() => {
     const cards = [...($('nextthuxk-list')?.querySelectorAll('.nx-card') || [])];
     const card = cards.find(c => c.dataset.code === String(code) &&
-      String(c.dataset.seq || '0') === String(seq) && tOk({ teacher: c.dataset.teacher || '' })) ||
-      cards.find(c => c.dataset.code === String(code) && String(c.dataset.seq || '0') === String(seq));
+      NX.normSeq(c.dataset.seq || '0') === NX.normSeq(seq) && tOk({ teacher: c.dataset.teacher || '' })) ||
+      cards.find(c => c.dataset.code === String(code) && NX.normSeq(c.dataset.seq || '0') === NX.normSeq(seq));
     if (!card) return;
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card.classList.add('nx-jump-target');

@@ -988,19 +988,19 @@ NX.submitCourse = async function (code, seq, zy, flag) {
     // 确认后再下结论；确认未命中才把（含拒绝字典文案的）失败交还给用户。
     if (!res.unknown) return res;
     const hitSelUnknown = () => fetchSelectedCourses().then(sel =>
-      sel.some(s => s.code === code && String(s.seq) === String(seq)));
+      sel.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq)));
     if (await NX.pollUntil(hitSelUnknown, 700, 3)) return { ok: true, msg: '选课成功' };
     const candUnknown = await NX.fetchCandidateCourses();
-    if (candUnknown.some(s => s.code === code && String(s.seq) === String(seq))) return { ok: true, msg: '已加入候补队列' };
+    if (candUnknown.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq))) return { ok: true, msg: '已加入候补队列' };
     return { ok: false, msg: res.msg };
   }
   // 轮询验证：已选列表或候补队列中出现即视为成功（总等待 ≥ 原 2s 固定延时）
   const hitSel = () => fetchSelectedCourses().then(sel =>
-    sel.some(s => s.code === code && String(s.seq) === String(seq)));
+    sel.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq)));
   if (await NX.pollUntil(hitSel, 700, 3)) return { ok: true, msg: '选课成功' };
   // 已满课提交后可能进入候补队列而非直接选上
   const cand = await NX.fetchCandidateCourses();
-  const foundQueue = cand.some(s => s.code === code && String(s.seq) === String(seq));
+  const foundQueue = cand.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq));
   return foundQueue ? { ok: true, msg: '已加入候补队列' } : { ok: false, msg: '选课未生效，请确认课程类型是否正确' };
 };
 
@@ -1009,7 +1009,7 @@ NX.dropCourse = async function (code, seq) {
   const { SEM, BASE } = state;
   // 判断是候补课程还是已选课程
   const cand = state.candidateCourses || [];
-  const isQueue = cand.some(c => c.code === code && String(c.seq) === String(seq));
+  const isQueue = cand.some(c => c.code === code && NX.normSeq(c.seq) === NX.normSeq(seq));   // 归一：格式不齐时误路由退选 API
   if (isQueue) {
     // 候补课程：m=dlDelete，从 dlSearchTab 页面拿 token
     const searchUrl = BASE + '/xkBks.vxkBksXkbBs.do?m=dlSearchTab&p_xnxq=' + SEM;
@@ -1019,7 +1019,7 @@ NX.dropCourse = async function (code, seq) {
     });
     if (!res.submitted) return res;
     const gone = () => NX.fetchCandidateCourses().then(newCand =>
-      !newCand.some(s => s.code === code && String(s.seq) === String(seq)));
+      !newCand.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq)));
     if (await NX.pollUntil(gone, 500, 3)) return { ok: true, msg: '已退出候补队列' };
     return { ok: false, msg: '退出队列未生效，请稍后重试' };
   }
@@ -1032,7 +1032,7 @@ NX.dropCourse = async function (code, seq) {
   });
   if (!res.submitted) return res;
   const gone = () => fetchSelectedCourses().then(sel =>
-    !sel.some(s => s.code === code && String(s.seq) === String(seq)));
+    !sel.some(s => s.code === code && NX.normSeq(s.seq) === NX.normSeq(seq)));
   if (await NX.pollUntil(gone, 500, 3)) return { ok: true, msg: '退选成功' };
   return { ok: false, msg: '退选未生效，请稍后重试' };
 };
@@ -1713,7 +1713,7 @@ NX.serverSearchStorm = async function (opts) {
   const probeTo = o.forceAll ? (tp > 0 ? tp : 25) : (exactCode ? 1 : (tp > 0 ? (tp <= 25 ? tp : 5) : 25));
   if (probeTo > 1) {
     const merged = {};
-    rows.forEach(r => { merged[r.code + '_' + (r.seq || '0')] = r; });
+    rows.forEach(r => { merged[r.code + '_' + NX.normSeq(r.seq || '0')] = r; });
     const pages = [];
     for (let p = 2; p <= probeTo; p++) pages.push(p);
     await runPool(pages, 5, async (p, idx) => {
@@ -1723,7 +1723,7 @@ NX.serverSearchStorm = async function (opts) {
         (r.rows || []).forEach(row => {
           // 课号检索深页护栏：教务若忽略筛选返回未过滤行，只收课号前缀命中的
           if (exactCode && !String(row.code || '').startsWith((o.kch || '').trim())) return;
-          const k = row.code + '_' + (row.seq || '0');
+          const k = row.code + '_' + NX.normSeq(row.seq || '0');
           if (!merged[k]) { merged[k] = row; rows.push(row); }
         });
       } catch (e) { console.warn(NX.TAG, 'server search page', p, e); }
@@ -1749,7 +1749,7 @@ NX.serverSearchStorm = async function (opts) {
 NX.mergeServerRows = function (rows) {
   const { state } = NX;
   if (!rows || !rows.length) return 0;
-  const byKey = new Map(state.allCourses.map(c => [c.code + '_' + (c.seq || '0'), c]));
+  const byKey = new Map(state.allCourses.map(c => [c.code + '_' + NX.normSeq(c.seq || '0'), c]));   // 键归一：池内已选 'code_1' vs 搜索行 'code_01' 不归一会推重复卡片
   let added = 0, filled = 0;
   // 可解析 = 大节或钟点任一通（用于「已有行是垃圾 time（列序兜底抓到课号等），
   // 新行带来真能上轴的 time/note」时安全替换）
@@ -1764,7 +1764,7 @@ NX.mergeServerRows = function (rows) {
     }
   }
   for (const r of rows) {
-    const k = r.code + '_' + (r.seq || '0');
+    const k = r.code + '_' + NX.normSeq(r.seq || '0');
     const ex = byKey.get(k);
     if (!ex) { state.allCourses.push(r); byKey.set(k, r); added++; }
     else {
@@ -1798,7 +1798,7 @@ NX.mergeServerRows = function (rows) {
     if (added || filled) state.poolVersion = (state.poolVersion || 0) + 1;
     // 暂存项同步（加暂存时 note 还没到——搜索/回填后落上，课表预览立即可用）
     for (const st of (state.stageCart || [])) {
-      if (st.code === r.code && (String(st.seq || '0') === String(r.seq || '0') || !parses(st))) {
+      if (st.code === r.code && (NX.normSeq(st.seq || '0') === NX.normSeq(r.seq || '0') || !parses(st))) {
         if (!st.note && (r.note || r.xkTextNote)) { st.note = r.note || r.xkTextNote; }
         if (!st.time && r.time) st.time = r.time;
       }
