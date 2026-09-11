@@ -762,48 +762,66 @@ NX.importToStage = function (jsonStr) {
 };
 
 NX.promoteDraft = async function (draft) {
-  const { state, showXkResult, fetchSelectedCourses, dropCourse, submitCourse, refreshSelected, renderPreviewTT, confirmDrop } = NX;
+  const { state, showXkResult, fetchSelectedCourses, fetchCandidateCourses, dropCourse, submitCourse, refreshSelected, renderPreviewTT } = NX;
   const $ = state.$;
   const toast = $('nextthuxk-toast');
   const prog = (msg) => { if (toast) { toast.className = 'nx-toast'; toast.style.cssText = 'display:block;opacity:1;background:rgba(29,31,36,.82);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);color:#fff'; toast.textContent = msg; } };
   try {
-    prog('正在获取已选课程…');
+    prog('正在获取已选与候补课程…');
     const current = await fetchSelectedCourses();
-    // ── 差分提交（OneTHU 同款）：绝不「全退再全选」。补退选窗口中途失败
-    //    会留下半张课表（已退的抢不回来）。code+seq 双键比对分三桶：
-    //    保留（交集，不碰）/ 新选（草稿有、当前无）/ 退掉（当前有、草稿无）。
-    //    顺序铁律：先选后退——最坏情况新课没选上但旧课全在（回到提交前
-    //    原状可重试），永不劣于提交前状态。
-    const key = (code, seq) => code + '_' + String(seq || '0');
-    const wantKeys = new Set(draft.courses.map(c => key(c.code, c.seq)));
-    const haveKeys = new Set(current.map(c => key(c.code, c.seq)));
-    const toAdd = draft.courses.filter(c => !haveKeys.has(key(c.code, c.seq)));
-    const toDrop = current.filter(c => !wantKeys.has(key(c.code, c.seq)));
-    const kept = draft.courses.length - toAdd.length;
-    if (!toAdd.length && !toDrop.length) {
-      showXkResult({ ok: true, msg: '「' + draft.name + '」与当前已选完全一致，无需提交' });
+    const cand = await fetchCandidateCourses();
+    state.candidateCourses = cand;   // dropCourse 靠此列表路由退队(dlDelete)/退选(deleteYxk)路径
+    // 差量比对（课号+课序号，前导零归一）：相同保留不动，多余已选退选、多余候补退队，只选入缺失草稿课
+    const keyOf = c => c.code + '_' + NX.normSeq(c.seq || '0');
+    const draftKeys = new Set(draft.courses.map(keyOf));
+    const toDropSel = current.filter(c => !draftKeys.has(keyOf(c)));
+    const dropSelKeys = new Set(toDropSel.map(keyOf));
+    const toDropQueue = cand.filter(c => !draftKeys.has(keyOf(c)) && !dropSelKeys.has(keyOf(c)));
+    const merged = current.concat(cand);
+    const existKeys = new Set(merged.map(keyOf));
+    const toSubmit = draft.courses.filter(c => !existKeys.has(keyOf(c)));
+    if (!toDropSel.length && !toDropQueue.length && !toSubmit.length) {
+      await refreshSelected();
+      showXkResult({ ok: true, msg: '草稿「' + draft.name + '」与当前课表一致，无需提交' });
       return;
     }
-    // 退课逐门二次确认（玻璃警告弹窗）——用户令：有人没意识到退选是真退
-    for (const c of toDrop) {
-      const go = await confirmDrop(c.name, c.code + '_' + String(c.seq || '0'));
-      if (!go) {
-        prog('已取消：' + c.name + ' 不退选，提交中止（已执行部分不受影响）');
-        break;
-      }
-      prog('退选 ' + c.name + '…');
-      await dropCourse(c.code, c.seq);
+    const nameOf = c => (c.name || c.code) + ' (' + c.code + '_' + (c.seq || '0') + ')';
+    const section = (title, arr) => ['· ' + title + ' ' + arr.length + ' 门：'].concat(arr.map((c, i) => '  ' + (i + 1) + '. ' + nameOf(c)));
+    const keptCount = new Set(merged.filter(c => draftKeys.has(keyOf(c))).map(keyOf)).size;
+    const lines = ['草稿「' + draft.name + '」与当前选课状态比对：', '· 保留（已选/候补已有）' + keptCount + ' 门'];
+    if (toDropSel.length) lines.push(...section('将退选', toDropSel));
+    if (toDropQueue.length) lines.push(...section('将退出候补', toDropQueue));
+    if (toSubmit.length) lines.push(...section('将选入', toSubmit));
+    lines.push('确认提交？');
+    if (!confirm(lines.join('\n'))) return;
+    const acts = [];
+    if (toDropSel.length) acts.push('退选 ' + toDropSel.length + ' 门');
+    if (toDropQueue.length) acts.push('退出候补 ' + toDropQueue.length + ' 门');
+    if (toSubmit.length) acts.push('选入 ' + toSubmit.length + ' 门');
+    if (!confirm('二次确认：即将' + acts.join('、') + '。\n执行过程中请勿关闭或刷新页面。确认开始执行？')) return;
+    for (let i = 0; i < toDropSel.length; i++) {
+      prog('退选 ' + (i + 1) + '/' + toDropSel.length + ': ' + (toDropSel[i].name || toDropSel[i].code));
+      await dropCourse(toDropSel[i].code, toDropSel[i].seq);
       await new Promise(r => setTimeout(r, 1000));
     }
-    for (let i = 0; i < toAdd.length; i++) {
-      const c = toAdd[i];
-      prog('新选 ' + (i + 1) + '/' + toAdd.length + ': ' + c.name);
+    for (let i = 0; i < toDropQueue.length; i++) {
+      prog('退队 ' + (i + 1) + '/' + toDropQueue.length + ': ' + (toDropQueue[i].name || toDropQueue[i].code));
+      await dropCourse(toDropQueue[i].code, toDropQueue[i].seq);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    for (let i = 0; i < toSubmit.length; i++) {
+      const c = toSubmit[i];
+      prog('选课 ' + (i + 1) + '/' + toSubmit.length + ': ' + (c.name || c.code));
       await submitCourse(c.code, c.seq, c.zy || 3, c.flag || 'bx');
       // 排队选课内部已有 1.5s 延时，这里额外等 2s 避免触发验证码
       await new Promise(r => setTimeout(r, 2000));
     }
     await refreshSelected();
-    showXkResult({ ok: true, msg: '「' + draft.name + '」差分提交完成：新选 ' + toAdd.length + '、退掉 ' + toDrop.length + '、保留 ' + kept });
+    const done = [];
+    if (toDropSel.length) done.push('退选' + toDropSel.length);
+    if (toDropQueue.length) done.push('退队' + toDropQueue.length);
+    if (toSubmit.length) done.push('选入' + toSubmit.length);
+    showXkResult({ ok: true, msg: '课表「' + draft.name + '」已提交（' + done.join('·') + '）！' });
     const sel = state.allCourses.filter(c => c.selected);
     renderPreviewTT(sel, '当前已选');
   } catch (e) { showXkResult({ ok: false, msg: '提交出错（已执行部分不回滚）: ' + e.message }); }
