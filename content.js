@@ -345,9 +345,50 @@ NX.launch = async function launch() {
         // （OneTHU dev 的 getXkVolunteer 是死码——这里真接上；池内逐门单查，
         // 绝不整库硬爬）
         try {
-          const vol = await NX.fetchVolunteer(pool);
-          state.volMap = Object.assign({}, state.volMap, vol);   // 全局持久：搜索/跳转新行可取
+          // 已选课概率优先（准备阶段已选的课进入工作台即快速可算）：
+          // onData 增量回调——每拉完一个院系立即合并 volMap + 全量重放 + 重渲，
+          // 已选课院系在拉取队列最前（池序），卡片逐院系点亮，不再等全部
+          // 院系串行扫完（10-20s+）才一次性上屏
+          const vol = await NX.fetchVolunteer(pool, {
+            onData: m => {
+              state.volMap = Object.assign({}, state.volMap, m);   // 全局持久：搜索/跳转新行可取
+              NX.applyVolunteer(pool, state.volMap);
+              NX.filterCourses();
+              try { NX.renderStageCart(); } catch (e) {}   // 暂存条概率同步点亮
+            },
+          });
+          state.volMap = Object.assign({}, state.volMap, vol);
           NX.applyVolunteer(pool, vol);
+          // 已选课缺行自愈：院系页缺行/错页（070 分院视图缺行等）导致 volMap
+          // 仍缺的已选课，逐课号 p_kch 定向补拉（fetchVolCourse，每课 1-2 请求）；
+          // 每课号每会话只试一次——正常情况零请求，绝不整库硬爬
+          if (state.isZhjwxk) {
+            const tried = state._selVolTried || (state._selVolTried = {});
+            const seenC = new Set();
+            const missing = [];
+            pool.forEach(c => {
+              if (!c.code || seenC.has(c.code) || tried[c.code]) return;
+              seenC.add(c.code);
+              tried[c.code] = 1;
+              if (!(state.volMap || {})[c.code + '_' + NX.normSeq(c.seq)]) missing.push(c.code);
+            });
+            if (missing.length) {
+              await NX.runPool(missing, 3, async code => {
+                try {
+                  const m2 = await NX.fetchVolCourse(code);
+                  if (Object.keys(m2).length) {
+                    state.volMap = Object.assign({}, state.volMap, m2);
+                    // 全量 volMap 重放（applyVolunteer else 分支会无条件清空——
+                    // 拿增量套会洗掉兄弟课序行已上屏的志愿数据，mergeServerRows 定案）
+                    NX.applyVolunteer(pool.filter(x => x.code === code), state.volMap);
+                  }
+                } catch (e2) { console.warn(TAG, '已选课志愿定向补拉', code, e2); }
+              });
+              NX.filterCourses();
+              try { NX.renderStageCart(); } catch (e) {}
+              console.log(TAG, '已选课志愿缺行定向补拉:', missing.length, '课号');
+            }
+          }
         } catch (e) { console.warn(TAG, 'volunteer:', e); }
       }
       const qBtn = state.$('nextthuxk-phase-tag');

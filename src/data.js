@@ -330,6 +330,10 @@ NX.fetchCourseCatalog = async function () {
 // 拉取策略 = 实时院系定向：池内课程按院系去重 → 逐院系 GET
 //   （v1.5.0 同款：首页无 page 无 token，翻页 &page=N）→ 院系内分页
 //   通常 1-3 页。搜索结果行遇到未拉院系按需补拉（防抖、不重拉）。
+// 增量回调（opts.onData，已选课概率优先）：逐院系扫描时每拉完一个院系
+//   （错页校验通过）即回调一次，传全量累积 map——调用方立即合并 volMap +
+//   applyVolunteer 全量重放 + 重渲，已选课卡片不等整轮扫完逐院系点亮
+//   （原先全部院系拉完才一次性上屏 10-20s+ → 首院系 1-2s 即现）。Ty 同。
 // 阶段门控：仅非队列阶段（预选/志愿期）——队列阶段概率走排队/余量模型。
 NX.DEPT_CODES = {
   '建筑学院': '000',
@@ -460,6 +464,7 @@ NX.fetchVolunteer = async function (courses, opts) {
   if (!state.isZhjwxk) return {};
   const { SEM, BASE } = state;
   const force = !!(opts && opts.force);
+  const onData = (opts && opts.onData) || null;   // 增量回调：每院系落地即通知（传全量累积 map）
   const done = state._volDepts || (state._volDepts = {});   // 本会话已拉院系（refreshSelected 用 force 重拉）
   const pool = (courses || []).filter(c => c && c.code && !c.isCandidate);
   const map = {};
@@ -501,6 +506,7 @@ NX.fetchVolunteer = async function (courses, opts) {
       items.forEach(v => { map[v.code + '_' + NX.normSeq(v.seq)] = v; });   // 键归一（前导0课序）
       done[code] = Date.now();
       fetched.push(code);
+      if (onData) { try { onData(map); } catch (e) { console.warn(NX.TAG, 'volunteer onData:', e); } }
     } catch (e) { console.warn(NX.TAG, 'volunteer dept ', code, e); }
   }
   // Ty：体育志愿（无院系轴，全量 ≤20 页；force 重拉）
@@ -524,6 +530,7 @@ NX.fetchVolunteer = async function (courses, opts) {
           { capacity: 0, applied: 0, volRequired: '', volElective: '', volOptional: '' }, map[k], v);
       });
       done.ty = Date.now();
+      if (onData) { try { onData(map); } catch (e) { console.warn(NX.TAG, 'volunteer onData:', e); } }
     } catch (e) { console.warn(NX.TAG, 'volunteer Ty:', e); }
   }
   console.log(NX.TAG, 'volunteer (dept-sync): ', Object.keys(map).length, 'entries, depts', fetched.join(',') || '(无新院系)');
