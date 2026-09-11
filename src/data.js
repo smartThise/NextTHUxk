@@ -1848,6 +1848,17 @@ NX.mergeServerRows = function (rows) {
       if (!ex.credits && r.credits) ex.credits = r.credits;
       if (!ex.department && r.department) ex.department = r.department;
       if (!ex.xkTextNote && r.xkTextNote) ex.xkTextNote = r.xkTextNote;
+      // 容量/余量刷新（用户实锤「形策跳转左边看得见余量、右边暂存不显示」）：
+      // 旧版只回填文字字段不刷数字——池内残行（列位漂移时代容量解析成 0/旧
+      // 搜索的过期数）永远吃不到新行的真值，暂存徽章合成 ac.capacity>0 就
+      // 恒假。kkxxSearch 行自带容量列，r.capacity>0 才动（分类签行 0/0 占位
+      // 不覆盖）；余量含 0（「余0=已满」是信息，不是未知）。
+      if (r.capacity > 0) {
+        if (ex.capacity !== r.capacity || ex.remaining !== r.remaining) filled++;
+        ex.capacity = r.capacity;
+        ex.remaining = r.remaining;
+        ex.available = r.remaining > 0;
+      }
       if (before !== ex.note + '|' + ex.time) filled++;
     }
     // 课号借用（OneTHU buildRows catByCode.get(code) 同款）：已选/候补/暂存行

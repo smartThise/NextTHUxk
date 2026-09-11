@@ -703,6 +703,9 @@ NX.stageProbHtml = function (c) {
   if (isQueuePhase) {
     const qKey = c.code + '_' + NX.normSeq(c.seq);
     let qd = queueDataMap[qKey];
+    // 池行键兜底：暂存行课序与池/kyl 行两套编号对不上时（形策一族），
+    // 用 courseForStage 仲裁出的池行自己的队列键查
+    if (!qd && ac) qd = queueDataMap[ac.code + '_' + NX.normSeq(ac.seq)];
     // 池行合成兜底（用户实锤「暂存区不显示当前课余量，要点击跳转才能看到」）：
     // kkxxSearch 行自带余量列，与列表卡 render.js:105 同款合成——课余量
     // kylSearch 未覆盖/未跑到时，只要这课在池里就先亮徽章
@@ -1476,6 +1479,7 @@ NX.loadAllSearch = async function () {
     state._searchRowsFullTag = NX.serverSigOf();
     // 同上：补齐页合并进会话池（暂存/详情/选课按钮一致可用）
     if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
+    try { NX.renderStageCart(); } catch (e) {}   // 搜索落池后暂存余量徽章回刷（池行容量/余量刚被新行刷新）
     // #32 定案：补齐后仍 < 服务端总数（翻页请求静默失败等）→ 保留提示可重试，
     // 绝不假装补齐成功（旧版无条件清 flag = 「点了没效果」的误导来源之一）
     const stillIncomplete = !!(res.totalRows && (res.rows || []).length < res.totalRows);
@@ -1589,6 +1593,7 @@ NX.runServerSearch = async function () {
           // 的 allCourses.find 落空，搜索卡片点暂存静默无效；code_seq 去重，
           // 池内已有行跳过，已选/队列 chip 按 selected/isCandidate 过滤不受污染）
           if ((res.rows || []).length && NX.mergeServerRows(res.rows)) NX.rebuildCourseMap();
+          try { NX.renderStageCart(); } catch (e) {}   // 搜索落池后暂存余量徽章回刷（形策实锤：旧池行容量坏、新行真值被丢）
           state._searchTotalPages = res.totalPages || 0;
           state._searchTotalRows = res.totalRows || 0;
           // 捕捉不完整（OneTHU 同款）：已加载 < 服务端总数 → 尾部页未探测，
