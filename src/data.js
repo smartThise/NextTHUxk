@@ -1807,12 +1807,18 @@ NX.serverSearchStorm = async function (opts) {
     };
     const pages = [];
     for (let p = 2; p <= probeTo; p++) pages.push(p);
-    // 第一轮 5 并发；失败页降并发降速重试两轮（教务/WebVPN 对连发限流：
-    // 用户实锤「加载全部」后 47/427——失败页静默蒸发没有任何重试）
+    // 第一轮 5 并发；失败页降并发降速重试（教务/WebVPN 对连发限流：
+    // 用户实锤「加载全部」后 47/427——失败页静默蒸发没有任何重试）。
+    // 第三轮单并发慢速——顽固页（用户实锤第 8 页两轮仍死）多半是被
+    // 持续限流，隔 700ms 逐个再给一次机会
     let fails = await runPages(pages, 5, 30);
     for (let round = 0; round < 2 && fails.length; round++) {
       console.warn(NX.TAG, '翻页失败重试 第' + (round + 1) + '轮:', fails.join(','));
       fails = await runPages(fails, 2, 250);
+    }
+    if (fails.length) {
+      console.warn(NX.TAG, '翻页失败重试 第3轮(单并发):', fails.join(','));
+      fails = await runPages(fails, 1, 700);
     }
     if (fails.length) console.warn(NX.TAG, '翻页仍失败:', fails.join(','), '——部分页教务限流，可再点「加载全部」续补');
   }
@@ -1924,6 +1930,16 @@ NX.mergeServerRows = function (rows) {
         ((state.levelMap || {})[r.code + '_' + NX.normSeq(r.seq)] ? '(键命中)' : '(键未命中)')).join(' , '));
   }
   if (NX.tbAttach) { try { NX.tbAttach(rows); } catch (e) {} }   // fail-soft
+  // ⚠️ 挂载时机在合并之后——搜索行此刻才有 _tbRef，必须在此处把匹配转移给
+  // 池内 ex 行（getCourse 取回 ex；此前在合并循环里转移是空转：那时
+  // r._tbRef 还没挂——用户实锤「徽章有评分、详情说没评价」二报未除根）
+  try {
+    for (const r of rows) {
+      if (!r._tbRef) continue;
+      const ex = byKey.get(r.code + '_' + NX.normSeq(r.seq || '0'));
+      if (ex && ex !== r && !ex._tbRef) ex._tbRef = r._tbRef;
+    }
+  } catch (e) { console.warn(NX.TAG, 'tbRef 转移失败', e); }
   // 志愿统计：已拉数据立刻应用到本批渲染行（launch 只把数据写进了池内
   // 旧行——搜索/跳转回来的新行对象此前永远拿不到，全卡「无数据」，
   // 用户十一报实锤）；未拉院系防抖补拉，拉完合并 volMap 回刷全池+当前行。
