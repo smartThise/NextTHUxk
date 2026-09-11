@@ -72,6 +72,10 @@ NX.courseCardHtml = function (c, ctx) {
     if (c.teacher) tags.push('<span class="nx-tag">' + esc(c.teacher) + '</span>');
     if (c.time) tags.push('<span class="nx-tag">' + esc(c.time) + '</span>');
     if (c.department) tags.push('<span class="nx-tag">' + esc(c.department) + '</span>');
+    // 课程特色上屏（用户实锤「无法显示查看」——特色此前只进筛选器不上卡片，
+    // 列位自适应修好后也得能看见，才能人工核对筛选对不对）
+    const feat = (c.courseFeature || '').replace(/[;；,，]/g, ' ').trim();
+    if (feat) tags.push('<span class="nx-tag" style="color:#7c5cff;background:rgba(124,92,255,.1);border-color:rgba(124,92,255,.25)">' + esc(feat) + '</span>');
     const vc = volColor(c);
     const volParts = [];
     const isTy = c.attr === '体育' || c.department?.includes('体育') || c.name?.includes('体育') || c.typeLabel === '体育';

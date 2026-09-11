@@ -312,6 +312,12 @@ NX.previewJoinRows = function (rows) {
       time: NX.parseTimeSlots(s.time || '').length ? s.time : (knoteHit.time || s.time || ''),
       note: knoteHit.note || s.note || '',
       xkTextNote: knoteHit.xkTextNote || knoteHit.note || s.xkTextNote || '',
+      // 学分回填（用户实锤「部分神秘 0 学分」）：候补阶段已选行可能来自一级
+      // 课表/候补兜底（credits 恒 0），池行/knote 有真值就补上——暂存学分
+      // 合计与预览都吃这个字段
+      credits: s.credits || knoteHit.credits || 0,
+      teacher: s.teacher || knoteHit.teacher || '',
+      name: s.name || knoteHit.name || '',
     });
   });
 };
@@ -746,10 +752,14 @@ NX.importToStage = function (jsonStr) {
     let added = 0;
     data.courses.forEach(c => {
       if (!stageCart.some(s => s.code === c.code && NX.normSeq(s.seq) === NX.normSeq(c.seq))) {
+        // flag 兜底同 promoteDraft：导入行缺 flag 查池按 baseFlag（体育判定链），
+        // 不得默认必修（体育/任选会被教务拒 = 漏选）
+        const ac = allCourses.find(x => x.code === c.code && NX.normSeq(x.seq || '0') === NX.normSeq(c.seq || '0'));
+        const bf = c.baseFlag || (ac ? baseFlag(ac) : 'rx');
         stageCart.push({
           code: c.code, seq: c.seq || '0', name: c.name || '', teacher: c.teacher || '',
-          time: c.time || '', credits: c.credits || 0, flag: c.flag || 'bx', zy: c.zy || 3,
-          baseFlag: c.baseFlag || (() => { const ac = allCourses.find(x => x.code === c.code); return ac ? baseFlag(ac) : 'rx'; })(),
+          time: c.time || '', credits: c.credits || 0, flag: c.flag || bf, zy: c.zy || 3,
+          baseFlag: bf,
         });
         added++;
       }
@@ -812,7 +822,15 @@ NX.promoteDraft = async function (draft) {
     for (let i = 0; i < toSubmit.length; i++) {
       const c = toSubmit[i];
       prog('选课 ' + (i + 1) + '/' + toSubmit.length + ': ' + (c.name || c.code));
-      await submitCourse(c.code, c.seq, c.zy || 3, c.flag || 'bx');
+      // flag 兜底链（用户实锤「体育课经常漏选」）：草稿行缺 flag 不得默认
+      // 必修——体育/任选走 bx 通道会被教务拒。查池行按 baseFlag（含体育
+      // 判定链）取身份，池里也没有才落 bx。
+      let flag = c.flag;
+      if (!flag) {
+        const ac = NX.state.allCourses.find(x => x.code === c.code && NX.normSeq(x.seq || '0') === NX.normSeq(c.seq || '0'));
+        flag = ac ? NX.baseFlag(ac) : 'bx';
+      }
+      await submitCourse(c.code, c.seq, c.zy || 3, flag);
       // 排队选课内部已有 1.5s 延时，这里额外等 2s 避免触发验证码
       await new Promise(r => setTimeout(r, 2000));
     }

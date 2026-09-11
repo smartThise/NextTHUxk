@@ -46,23 +46,64 @@ NX.parseFullProgram = function (doc) {
 
 NX.parseCatalog = function (doc) {
   const out = [];
+  // ── 表头列位自适应（用户实锤「特色筛不出 + 神秘 0 学分 + 体育漏判」三连：
+  //    2026-2027-1 已选表列序已实锤漂移过，目录表同理一漂 cell(4)/cell(12)/
+  //    cell(0) 全指错格——学分 0、特色恒空筛不出、院系错→体育判定丢→
+  //    baseFlag 落任选提交被拒漏选）。表头行 tr.trr1 扫列名→索引；首条
+  //    数据行课号格码型校验不过就整表回退固定列位（老页面零影响）。
+  const headCells = [...(doc.querySelector('tr.trr1')?.querySelectorAll('td,th') || [])]
+    .map(x => (x.textContent || '').trim());
+  const hIdx = keys => {
+    for (const k of keys) {
+      const i = headCells.findIndex(c => c.includes(k));
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+  const H = {
+    department: hIdx(['院系']),
+    code: hIdx(['课号']),
+    seq: hIdx(['课序号']),
+    name: hIdx(['课程名称', '课程名']),
+    credits: hIdx(['学分']),
+    teacher: hIdx(['教师']),
+    capacity: hIdx(['本科生容量', '本科容量']),
+    remaining: hIdx(['本科生余量', '本科余量']),
+    gradCapacity: hIdx(['研究生容量']),
+    gradRemaining: hIdx(['研究生余量']),
+    time: hIdx(['上课时间']),
+    note: hIdx(['说明', '备注']),
+    feature: hIdx(['课程特色', '特色']),
+    grade: hIdx(['年级']),
+    tongshi: hIdx(['通识']),
+  };
+  // 固定列位（表头认不出时的旧版行为）
+  const F = { department: 0, code: 1, seq: 2, name: 3, credits: 4, teacher: 5, capacity: 6, remaining: 7, gradCapacity: 8, gradRemaining: 9, time: 10, note: 11, feature: 12, grade: 13, tongshi: 18 };
+  let useHead = H.code >= 0 && H.name >= 0;
+  if (useHead) {
+    const r0 = doc.querySelector('tr.trr2');
+    const c0 = r0 ? ((r0.querySelectorAll('td')[H.code]?.textContent || '').trim()) : '';
+    if (!/^[A-Za-z0-9]+$/.test(c0) || !/\d/.test(c0)) useHead = false;   // 表头列名猜错 → 全回退
+  }
+  const ix = k => (useHead && H[k] >= 0 ? H[k] : F[k]);
   doc.querySelectorAll('tr.trr2').forEach(row => {
     const tds = row.querySelectorAll('td');
     if (tds.length < 11) return;
     const cell = i => (tds[i]?.textContent || '').trim().replace(/\s+/g, ' ');
-    const code = cell(1);
-    const name = cell(3);
+    const code = cell(ix('code'));
+    const name = cell(ix('name'));
     // 外校课程课号带前缀：PK=北大、GPK=北大研、BW=北外（如 BW3w0007 含小写
     // 字母）。OneTHU 同款规则：纯字母数字且至少含一个数字——旧版 /^\d+$/
     // 把 PK/GPK/BW 行全吃了（「北大北外课搜不到」实锤）。
     if (!code || !name || !/^[A-Za-z0-9]+$/.test(code) || !/\d/.test(code)) return;
-    const bksCap = parseInt(cell(6)) || 0;
-    const bksRem = parseInt(cell(7)) || 0;
-    const teacherLink = tds[5]?.querySelector('a[href*="showJsDetail"]');
+    const bksCap = parseInt(cell(ix('capacity'))) || 0;
+    const bksRem = parseInt(cell(ix('remaining'))) || 0;
+    const tIdx = ix('teacher'), nIdx = ix('name');
+    const teacherLink = tds[tIdx]?.querySelector('a[href*="showJsDetail"]');
     const teacherHref = teacherLink?.getAttribute('href') || '';
     const teacherIdMatch = teacherHref.match(/p_jsh=([^&]+)/);
     const teacherId = teacherIdMatch ? teacherIdMatch[1] : '';
-    const courseLink = tds[3]?.querySelector('a[href*="showToXs"]');
+    const courseLink = tds[nIdx]?.querySelector('a[href*="showToXs"]');
     const detailHref = courseLink?.getAttribute('href') || '';
     // v1.5.0 同款：行内扫课程属性格（kkxxSearch 网格带「课程属性」列，v1.5.0
     // 用 cells.find 扫。重写时被我硬编码 attr:'' 只靠一级课表回填——培养方案
@@ -71,28 +112,28 @@ NX.parseCatalog = function (doc) {
     const attrCell = [...tds].map(td => (td.textContent || '').trim()).find(c => c === '必修' || c === '限选' || c === '任选');
     out.push({
       code,
-      seq: cell(2),
+      seq: cell(ix('seq')),
       name,
-      credits: parseFloat(cell(4)) || 0,
-      teacher: cell(5),
+      credits: parseFloat(cell(ix('credits'))) || 0,
+      teacher: cell(tIdx),
       teacherId,
-      department: cell(0),
-      time: cell(10),
+      department: cell(ix('department')),
+      time: cell(ix('time')),
       capacity: bksCap,
       remaining: bksRem,
       available: bksRem > 0,
       selected: false,
       queue: '',
-      group: cell(0),
+      group: cell(ix('department')),
       attr: attrCell || '',   // v1.5.0 行内扫描（data.js:24 同款）——培养方案外的课不再塌成「任选」
       detailUrl: detailHref,
-      note: cell(11),   // 说明列 = 外校真实时间载体（OneTHU parseXkCatalogPage td(11) 同款；clockRangesOf 读此字段）
-      xkTextNote: cell(11),
-      courseFeature: cell(12),
-      grade: cell(13),
-      tongshiGroup: cell(18),
-      gradCapacity: parseInt(cell(8)) || 0,
-      gradRemaining: parseInt(cell(9)) || 0,
+      note: cell(ix('note')),   // 说明列 = 外校真实时间载体（OneTHU parseXkCatalogPage td(11) 同款；clockRangesOf 读此字段）
+      xkTextNote: cell(ix('note')),
+      courseFeature: cell(ix('feature')),
+      grade: cell(ix('grade')),
+      tongshiGroup: cell(ix('tongshi')),
+      gradCapacity: parseInt(cell(ix('gradCapacity'))) || 0,
+      gradRemaining: parseInt(cell(ix('gradRemaining'))) || 0,
       volRequired: '', volElective: '', volOptional: '', volSports: '',
     });
   });
@@ -1290,8 +1331,12 @@ NX.fetchCandidateCourses = async function () {
         const time = td(7) || '';
         const teacher = td(8) || '';
         if (!code || !name) continue;
+        // 表头行拦截（用户实锤「候选把 课程名·老师 标题栏当一门课」）：行类
+        // 放宽 trr[12] 是为了防新学期改行类，但 trr1=表头（OneTHU 样本同证）
+        // ——「课号/课程名称」是中文照样过上面的非空校验。课号必须码型。
+        if (!/^[A-Za-z0-9]+$/.test(code) || !/\d/.test(code)) continue;
         const zyNum = zyStr.match(/第([一二三1-3])志愿/);   // 一二三/1-3 两种写法都收
-        const typeCode = typeLabel === '必修' ? '006' : typeLabel === '限选' ? '008' : '007';
+        const typeCode = typeLabel === '必修' ? '006' : typeLabel === '限选' ? '008' : typeLabel === '体育' ? 'ty' : '007';
         out.push({
           code, seq: seq || '0', name, teacher, time,
           credits: 0, typeLabel, typeCode,
