@@ -925,7 +925,21 @@ NX.renderDrafts = function () {
     btn.onclick = () => {
       const idx = parseInt(btn.dataset.idx);
       const d = savedDrafts[idx];
-      if (d) { state.previewDraftIdx = idx; renderPreviewTT(d.courses, '草稿「' + d.name + '」预览'); }
+      if (!d) return;
+      const stageCart = state.stageCart;
+      const same = stageCart.length === d.courses.length && stageCart.every(s => d.courses.some(c => c.code === s.code && String(c.seq || '0') === String(s.seq || '0')));
+      if (stageCart.length && !same && !confirm('暂存区已有 ' + stageCart.length + ' 门课程，载入草稿「' + d.name + '」将替换它们，继续？')) {
+        renderPreviewTT(d.courses, '草稿「' + d.name + '」预览');
+        return;
+      }
+      state.stageCart = d.courses.map(c => ({ ...c, seq: c.seq || '0', flag: c.flag || 'bx', zy: c.zy || 3 }));
+      store.set('stageCart', state.stageCart);
+      NX.invalidatePreview();
+      state.previewDraftIdx = -1;
+      NX.renderStageCart();
+      NX.filterCourses();
+      renderPreviewTT(state.stageCart, '暂存区预览');
+      NX.showXkResult({ ok: true, msg: '草稿「' + d.name + '」已载入暂存区，可直接修改' });
     };
   });
   el.querySelectorAll('.nx-draft-go').forEach(btn => {
