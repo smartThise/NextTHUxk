@@ -1235,9 +1235,9 @@ NX.fetchQueueData = async function (courses) {
       // 暂存课不在搜索池里就永远不进 kyl 查询集，余量徽章恒空）。
       const coursesAll = (courses || []).concat((state.stageCart || []));
       const codes = [...new Set(coursesAll.map(c => String(c.code || '').trim()).filter(Boolean))];
-      const kylPost = async code => {
+      const kylPost = async (code, page) => {
         const body = new URLSearchParams({
-          m: 'kylSearch', page: '1', token,
+          m: 'kylSearch', page: String(page), token,
           'p_sort.p1': '', 'p_sort.p2': '', 'p_sort.asc1': 'true', 'p_sort.asc2': 'true',
           p_xnxq: SEM, pathContent: '',
           p_kch: code, p_kxh: '', p_kcm: '', p_skxq: '', p_skjc: '', bt: '',
@@ -1246,16 +1246,31 @@ NX.fetchQueueData = async function (courses) {
         const buf = await resp.arrayBuffer();
         return new TextDecoder('gbk').decode(buf);
       };
+      const re = /\[\s*"(\d+)"\s*,\s*"([^"]*?)"\s*,\s*"[^"]*?"\s*,\s*"(\d*)"\s*,\s*"(\d*)"\s*,\s*"[^"]*?"\s*,\s*"[^"]*?"\s*\]/g;
+      const mergeGrid = html => {
+        let n = 0, pm;
+        re.lastIndex = 0;
+        while ((pm = re.exec(html)) !== null) {
+          const key = pm[1] + '_' + (NX.normSeq ? NX.normSeq(pm[2]) : pm[2]);
+          if (!map[key]) { map[key] = { code: pm[1], seq: pm[2], qCapacity: parseInt(pm[3]) || 0, qRemaining: parseInt(pm[4]) || 0, qQueue: 0 }; n++; }
+        }
+        return n;
+      };
       await NX.runPool(codes, 5, async (code, idx) => {
         await new Promise(r => setTimeout(r, 30 * (idx % 5)));   // 微错峰（40/74 教训）
         try {
-          const html = await kylPost(code);
-          if (!html.includes('gridData')) return;
-          let pm;
-          const re = /\[\s*"(\d+)"\s*,\s*"([^"]*?)"\s*,\s*"[^"]*?"\s*,\s*"(\d*)"\s*,\s*"(\d*)"\s*,\s*"[^"]*?"\s*,\s*"[^"]*?"\s*\]/g;
-          while ((pm = re.exec(html)) !== null) {
-            const key = pm[1] + '_' + (NX.normSeq ? NX.normSeq(pm[2]) : pm[2]);
-            if (!map[key]) map[key] = { code: pm[1], seq: pm[2], qCapacity: parseInt(pm[3]) || 0, qRemaining: parseInt(pm[4]) || 0, qQueue: 0 };
+          // 翻页（OneTHU getXkQueueData 同款，页号从 0 起）：单课号也可能几十
+          // 班——形势与政策(10680101) 一班一师全学期 ~40 班，一页装不下，只取
+          // 第 1 页会漏后半教师（用户实锤王洪川班查不到余量）。页数按分页器
+          // 「共N页」，单课号上限 10 页防失控。
+          const firstHtml = await kylPost(code, 0);
+          if (!firstHtml.includes('gridData')) return;
+          mergeGrid(firstHtml);
+          const totalPages = Math.min(parseInt((firstHtml.match(/共\s*(\d+)\s*页/) || [])[1], 10) || 1, 10);
+          for (let p = 1; p < totalPages; p++) {
+            const html = await kylPost(code, p);
+            if (!html.includes('gridData')) break;
+            if (mergeGrid(html) === 0) break;
           }
         } catch (e) { console.warn(NX.TAG, 'kyl code', code, e); }
       });
