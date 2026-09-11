@@ -1546,7 +1546,11 @@ NX.backfillCandidateMeta = async function (candidates) {
     try {
       const r = await NX.serverSearch({ kch: c.code });
       const rows = r.rows || [];
-      const hit = rows.find(x => String(x.seq || '0') === String(c.seq || '0')) || rows[0];
+      // 三段匹配（同款修法：归一精确 → 同课同师 → 首行兜底）——同课号多班
+      // 时 rows[0] 常是别的班，借时间/学分张冠李戴
+      const hit = rows.find(x => NX.normSeq(x.seq || '0') === NX.normSeq(c.seq || '0'))
+        || rows.find(x => c.teacher && x.teacher === c.teacher)
+        || rows[0];
       if (hit) {
         c.credits = hit.credits || 0;
         c.capacity = hit.capacity || 0;

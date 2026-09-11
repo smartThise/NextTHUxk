@@ -224,7 +224,10 @@ NX.backfillSelTimes = async function () {
           }
           rows = (await state._bfScanP).filter(c => c.code === r.code);
         }
-        let hit = rows.find(c => c.code === r.code && String(c.seq || '0') === String(r.seq || '0'));
+        // 班次匹配三段（前导零两套编号实锤）：归一精确 → 同课同师 → 课号唯一行。
+        // 旧版 String 直比 "1"≠"01" 直接掉进课号兜底 → 借到别的班的时间。
+        let hit = rows.find(c => c.code === r.code && NX.normSeq(c.seq) === NX.normSeq(r.seq));
+        if (!hit && r.teacher) hit = rows.find(c => c.code === r.code && c.teacher === r.teacher);
         if (!hit) hit = rows.find(c => c.code === r.code);   // 课序号对不上（两套编号）也认课号唯一行
         if (hit) { NX.mergeServerRows([hit]); outcome.push(r.code + '✓'); bfStatus[r.code] = '✓已上轴'; }
         else { outcome.push(r.code + '×(搜到' + rows.length + '行无匹配)'); bfStatus[r.code] = '×搜到' + rows.length + '行无匹配'; }
@@ -265,25 +268,44 @@ NX.knoteRemember = function (code, seq, note, time) {
   _knoteSaveT = setTimeout(() => { _knoteSaveT = null; try { NX.store.set('knote', kn); } catch (e) {} }, 400);
 };
 
-// OneTHU buildRows join（xklogic.ts catByCode.get(s.code) 原样移植）：
-// 已选/候补/暂存行时间解析不出 → 当场按课号借池行（同课号任意班次）的
-// note/time 合成预览行。每次渲染现算，不依赖回填时序——池里有目录行
-// （用户浏览/搜索带回来的）预览立即能用。
+// OneTHU buildRows join（xklogic.ts catByCode.get(s.code) 移植 + 修班次张冠李戴）：
+// 已选/候补/暂存行时间解析不出 → 借池行（目录/搜索带回的）note/time 合成预览行。
+// 优先级（用户报「课余量模式同课号不同时间的课全挤一格」根因：旧版无脑按课号
+// 借首行——同课号多班全部借成同一条时间）：① 精确同班 code_seq0（前导零归一）
+// ② 同课同师（外校课两套编号 seq 对不上时靠教师消歧）③ 同课号任意班次（最后
+// 手段，仅剩一门才轮到）。每次渲染现算，不依赖回填时序。
 NX.previewJoinRows = function (rows) {
-  const catByCode = new Map();   // 课号 → 有 note/可解析时间的池行（首个优先）
+  const ns = NX.normSeq;
+  const bySeq = new Map();          // code_seq0 → 有可解析时间的池行
+  const byCodeTeacher = new Map();  // code|teacher → 池行
+  const catByCode = new Map();      // 课号 → 池行（任意班次）
   const fallbackByCode = new Map();
   for (const c of NX.state.allCourses) {
     if (NX.parseTimeSlots(c.time || '').length > 0 || NX.clockRangesOf(c.note || c.xkTextNote || '', c.time || '').length > 0) {
+      const k = c.code + '_' + ns(c.seq);
+      if (!bySeq.has(k)) bySeq.set(k, c);
+      if (c.teacher && !byCodeTeacher.has(c.code + '|' + c.teacher)) byCodeTeacher.set(c.code + '|' + c.teacher, c);
       if (!catByCode.has(c.code)) catByCode.set(c.code, c);
     } else if ((c.note || c.xkTextNote) && !fallbackByCode.has(c.code)) {
       fallbackByCode.set(c.code, c);
     }
   }
+  // knote 键前导零归一索引（写入用原始 seq，可能 "01" vs 借用方 "1"）
+  const kn = NX.state.knote || {};
+  const knBySeq = new Map();
+  for (const k of Object.keys(kn)) {
+    const i = k.indexOf('_');
+    if (i < 0) continue;
+    const nk = k.slice(0, i + 1) + ns(k.slice(i + 1));
+    if (!knBySeq.has(nk)) knBySeq.set(nk, kn[k]);
+  }
   return rows.map(s => {
     if (NX.parseTimeSlots(s.time || '').length > 0 || NX.clockRangesOf(s.note || s.xkTextNote || '', s.time || '').length > 0) return s;
-    const c0 = catByCode.get(s.code) || fallbackByCode.get(s.code);
-    const kn = NX.state.knote || {};
-    const knoteHit = c0 || kn[s.code + '_' + (s.seq || '0')]
+    const sKey = s.code + '_' + ns(s.seq);
+    const c0 = bySeq.get(sKey) || knBySeq.get(sKey)
+      || (s.teacher && byCodeTeacher.get(s.code + '|' + s.teacher))
+      || catByCode.get(s.code) || fallbackByCode.get(s.code);
+    const knoteHit = c0
       || Object.keys(kn).map(k => kn[k] && k.indexOf(s.code + '_') === 0 ? kn[k] : null).filter(Boolean)[0];
     if (!knoteHit) return s;
     return Object.assign({}, s, {
