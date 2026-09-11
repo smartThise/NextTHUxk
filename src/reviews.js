@@ -245,9 +245,11 @@ var NX = NX || {};
   };
 
   // ─── 深链 ─────────────────────────────────────────────────
-  NX.tbCourseUrl = function (e) {
-    if (!e) return TB_PAGE + 'search.html';
-    return TB_PAGE + 'course.html?sqid=' + encodeURIComponent(e.sqid) +
+  // 站点已去 .html 后缀（course.html→308→course，实测查询串保留）——直连新格式。
+  // 空匹配兜底：search?keyword=课名（q= 实测 400，keyword 是页面 input 名）。
+  NX.tbCourseUrl = function (e, c) {
+    if (!e) return TB_PAGE + 'search?keyword=' + encodeURIComponent((c && c.name) || '');
+    return TB_PAGE + 'course?sqid=' + encodeURIComponent(e.sqid) +
       '&tid=' + encodeURIComponent(e.tid == null ? '' : e.tid) +
       '&name=' + encodeURIComponent(e.kcm) +
       '&teacher=' + encodeURIComponent(e.jsm || '') +
@@ -298,10 +300,10 @@ var NX = NX || {};
       headBits.push('<div class="nx-tb-head nx-tb-empty">这门课在 THU选课社区还没有点评</div>');
     }
     headBits.push('<div class="nx-tb-actions-row">' +
-      '<a class="nx-tb-link" href="' + esc(NX.tbCourseUrl(e)) + '" target="_blank" rel="noopener noreferrer">查看课程页 ↗</a>' +
+      '<a class="nx-tb-link" href="' + esc(NX.tbCourseUrl(e, c)) + '" target="_blank" rel="noopener noreferrer">查看课程页 ↗</a>' +
       '<a class="nx-tb-link nx-tb-link-primary" href="' + esc(NX.tbWriteUrl(e)) + '" target="_blank" rel="noopener noreferrer">✎ 去写点评</a></div>');
     // CC BY-NC 授权署名（数据与点评内容均来自 THU选课社区贡献者）
-    headBits.push('<div class="nx-tb-license">点评数据来自 <a href="' + esc(NX.tbCourseUrl(e)) + '" target="_blank" rel="noopener noreferrer">THU选课社区</a> 贡献者，以 ' +
+    headBits.push('<div class="nx-tb-license">点评数据来自 <a href="' + esc(NX.tbCourseUrl(e, c)) + '" target="_blank" rel="noopener noreferrer">THU选课社区</a> 贡献者，以 ' +
       '<a href="https://creativecommons.org/licenses/by-nc/4.0/deed.zh" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a> 提供 · 仅限非商业用途</div>');
 
     if (!e) {

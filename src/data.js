@@ -1848,6 +1848,11 @@ NX.mergeServerRows = function (rows) {
       if (!ex.credits && r.credits) ex.credits = r.credits;
       if (!ex.department && r.department) ex.department = r.department;
       if (!ex.xkTextNote && r.xkTextNote) ex.xkTextNote = r.xkTextNote;
+      // 社区点评匹配转移（用户实锤「徽章显示评分、点详情却说没评价、链接跳
+      // 搜索页」）：搜索行在 serverSearch 里已挂 _tbRef，合并进已有行时若不
+      // 转移，getCourse 取回的旧行无匹配 → 弹窗 e=null →「还没点评」+ 兜底
+      // 链接跳搜索页。徽章行与详情行从此同一份匹配。
+      if (!ex._tbRef && r._tbRef) ex._tbRef = r._tbRef;
       // 容量/余量刷新（用户实锤「形策跳转左边看得见余量、右边暂存不显示」）：
       // 旧版只回填文字字段不刷数字——池内残行（列位漂移时代容量解析成 0/旧
       // 搜索的过期数）永远吃不到新行的真值，暂存徽章合成 ac.capacity>0 就
