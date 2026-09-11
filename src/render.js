@@ -946,8 +946,7 @@ NX.renderDrafts = function () {
     btn.onclick = () => {
       const d = savedDrafts[parseInt(btn.dataset.idx)];
       if (!d) return;
-      if (!confirm('确定提交「' + d.name + '」？\n将先退选所有已选课程，再选入该草稿中的 ' + d.courses.length + ' 门课程。')) return;
-      promoteDraft(d);
+      promoteDraft(d);   // 确认由 promoteDraft 内差量明细+终确认两级弹窗承担
     };
   });
   el.querySelectorAll('.nx-draft-del').forEach(btn => {
