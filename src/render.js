@@ -1571,10 +1571,11 @@ NX.runServerSearch = async function () {
           }
         }
         // 搜索结果带核心池标记渲染（选中/候补徽章与按钮状态一致）
-        const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + (c.seq || '0')));
-        const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + (c.seq || '0')));
+        // 键归一：已选 '1' vs 搜索行 '01' → #43 标记丢失（PR #44 合并时回归，再修）
+        const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
+        const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
         (res.rows || []).forEach(r => {
-          const k = r.code + '_' + (r.seq || '0');
+          const k = r.code + '_' + NX.normSeq(r.seq || '0');
           r.selected = selKeys.has(k);
           r.isCandidate = candKeys.has(k);
         });

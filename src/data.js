@@ -1784,20 +1784,37 @@ NX.serverSearchStorm = async function (opts) {
   if (probeTo > 1) {
     const merged = {};
     rows.forEach(r => { merged[r.code + '_' + NX.normSeq(r.seq || '0')] = r; });
+    // 页抓取：0 行（serverSearch 内部吞掉网络/死页错误返回 0 行，不抛——
+    // 旧版 try/catch 永不触发，失败页直接蒸发）或 0 新键（服务端忽略 page
+    // 参数回吐首页内容）都算失败，进重试队列。
+    const runPages = async (pages, conc, stag) => {
+      const fails = [];
+      await runPool(pages, conc, async (p, idx) => {
+        await new Promise(r => setTimeout(r, stag * (idx % conc)));
+        try {
+          const r = await serverSearch({ ...o, page: p });
+          let added = 0;
+          (r.rows || []).forEach(row => {
+            // 课号检索深页护栏：教务若忽略筛选返回未过滤行，只收课号前缀命中的
+            if (exactCode && !String(row.code || '').startsWith((o.kch || '').trim())) return;
+            const k = row.code + '_' + NX.normSeq(row.seq || '0');
+            if (!merged[k]) { merged[k] = row; rows.push(row); added++; }
+          });
+          if (!(r.rows || []).length || added === 0) fails.push(p);   // 空页/回吐页 → 重试
+        } catch (e) { fails.push(p); console.warn(NX.TAG, 'server search page', p, e); }
+      });
+      return fails;
+    };
     const pages = [];
     for (let p = 2; p <= probeTo; p++) pages.push(p);
-    await runPool(pages, 5, async (p, idx) => {
-      await new Promise(r => setTimeout(r, 30 * (idx % 5)));
-      try {
-        const r = await serverSearch({ ...o, page: p });
-        (r.rows || []).forEach(row => {
-          // 课号检索深页护栏：教务若忽略筛选返回未过滤行，只收课号前缀命中的
-          if (exactCode && !String(row.code || '').startsWith((o.kch || '').trim())) return;
-          const k = row.code + '_' + NX.normSeq(row.seq || '0');
-          if (!merged[k]) { merged[k] = row; rows.push(row); }
-        });
-      } catch (e) { console.warn(NX.TAG, 'server search page', p, e); }
-    });
+    // 第一轮 5 并发；失败页降并发降速重试两轮（教务/WebVPN 对连发限流：
+    // 用户实锤「加载全部」后 47/427——失败页静默蒸发没有任何重试）
+    let fails = await runPages(pages, 5, 30);
+    for (let round = 0; round < 2 && fails.length; round++) {
+      console.warn(NX.TAG, '翻页失败重试 第' + (round + 1) + '轮:', fails.join(','));
+      fails = await runPages(fails, 2, 250);
+    }
+    if (fails.length) console.warn(NX.TAG, '翻页仍失败:', fails.join(','), '——部分页教务限流，可再点「加载全部」续补');
   }
   // 教师名兜底：课名 0 行且非纯数字 → 换教师通道重试一次（单页 + 已知页数）
   if (!rows.length && o.kcm && o.kcm.trim() && !/^\d+$/.test(o.kcm.trim()) && !o.teacher) {
