@@ -1185,6 +1185,11 @@ NX.filterCourses = function () {
   //    注意 f（chip）不入指纹：必修/限选/体育/可选/已选/队列全是本地过滤
   //    （教务无对应参数），chip 切换即时生效不重查（v1.5.0 语义）。
   //    conflict/credits/reviews/sort/xknote 同样只本地细化。
+  // 换词/换筛选时浏览页码归位（#46 审阅 fast-follow）：只比较除页码外的条件
+  // 部分——纯翻页（browseGoto 只动 _browsePage）不触发重置，否则翻页被自己
+  // 吃掉；必须在下方 sig 计算前执行，否则存储的 sig 带旧页码会多一次重查
+  const _qsig = sg => { try { const a = JSON.parse(sg); a[2] = 1; return JSON.stringify(a); } catch (e) { return sg; } };
+  if (state._serverSig && _qsig(NX.serverSigOf()) !== _qsig(state._serverSig)) state._browsePage = 1;
   const serverSig = NX.serverSigOf();
   const sigChanged = serverSig !== state._serverSig;
   state._serverSig = serverSig;
