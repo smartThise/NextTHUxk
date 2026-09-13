@@ -543,6 +543,7 @@ NX.resolveCourseZy = async function (courses, selMap, zyCache) {
 NX.refreshSelected = async function () {
   const { state, store, fetchSelectedCourses, fetchCandidateCourses, resolveCourseZy, filterCourses, renderPreviewTT } = NX;
   const { allCourses } = state;
+  NX.invalidateWholeTT();   // 选退课/退队后个人整体课表必变，弃缓存重拉正源
   // 重新获取已选课程
   const selected = await fetchSelectedCourses();
   const selMap = {};
@@ -562,6 +563,8 @@ NX.refreshSelected = async function () {
   allCourses.forEach(c => {
     c.isCandidate = candKeys.has(c.code + '_' + (c.seq || '0'));
   });
+  // 暂存区里已选/候补课的正源时间同步（#46：假冲突修复）
+  try { await NX.syncStageWithWholeTT(); } catch (e) { console.warn(NX.TAG, 'stage sync:', e); }
   // 课余量/排队同步（池内按需，提交选课后余量必变）；非队列阶段走志愿统计
   try {
     const qResult = await NX.fetchQueueData(allCourses);
@@ -587,6 +590,26 @@ NX.refreshSelected = async function () {
 };
 
 // ─── Stage Cart & Drafts ──────────────────────────────────────
+
+// 暂存区与整体课表同步：暂存项若已是已选/候补课（会出现在个人整体课表里），
+// time/teacher 快照以课表正源刷新（旧快照可能带着 yxSearchTab 脏时间——假
+// 冲突「周一 5-6节 思想文化素养 × 工程表达」即此来）；暂存且未选的课课表
+// 里没有，map 命不中，保持原快照。有改动才写盘 + 重渲。
+NX.syncStageWithWholeTT = async function () {
+  const { state, store, renderStageCart, renderPreviewTT, invalidatePreview } = NX;
+  const { stageCart } = state;
+  if (!stageCart || !stageCart.length) return;
+  const sig = c => [c.code, c.time || '', c.teacher || '', c.name || ''].join('|');
+  const before = stageCart.map(sig).join(';');
+  await NX.overrideFromWholeTT(stageCart);
+  if (stageCart.map(sig).join(';') === before) return;
+  store.set('stageCart', stageCart);
+  invalidatePreview();
+  try { renderStageCart(); } catch (e) {}
+  try {
+    if (state.previewMode === 'stage') renderPreviewTT(stageCart, (state.$('nextthuxk-preview-info') || {}).textContent || '暂存课表');
+  } catch (e) {}
+};
 
 // #36-2：把课程加入当前正在预览的草稿（此前草稿「编辑」只能删不能加）
 NX.addToCurrentDraft = function (code, seq, flag, zy) {

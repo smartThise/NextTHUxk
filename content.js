@@ -413,6 +413,9 @@ NX.launch = async function launch() {
     renderPreviewTT(pool.filter(c => c.selected).concat(state.candidateCourses), '当前已选');
     NX.renderQueueSection();
     await renderStageAndDrafts();
+    // 暂存区已选/候补课以整体课表正源刷新时间/教师（#46 假冲突修复）；
+    // renderStageAndDrafts 之后 stageCart 才加载完，且不阻塞收尾
+    NX.syncStageWithWholeTT().catch(e => console.warn(TAG, 'stage sync:', e));
     NX.backfillStageRows();   // 暂存行不在池（重载后池只含已选/候补）→ 概率/时间全断：此时 stageCart 才真正加载完
     NX.finishLaunch({ ts: Date.now() }, selectedCourses.length, 0, false);
     NX.filterCourses();      // 初始落点：浏览模式第 1 页（1 个请求），随时查询
