@@ -20,7 +20,11 @@ NX.parseTimeSlots = function (timeStr) {
     const dayNum = parseInt(m[1]);
     const dajie = parseInt(m[2]);
     if (dayNum >= 1 && dayNum <= 7 && dajie >= 1 && dajie <= 6) {
-      slots.push({ day: dayLabels[dayNum - 1], slot: slotLabels[dajie - 1] });
+      // 教务常把同一 day-大节按周次拆多段（如「1-1(2-16周),1-1(1周)」）→
+      // 同格多行。格子级语义只占一格，必须去重：否则课表预览分道把重复行
+      // 当两个重叠块，lanes=2 劈半宽，且同 key 互相覆盖 lane 数据
+      const s = { day: dayLabels[dayNum - 1], slot: slotLabels[dajie - 1] };
+      if (!slots.some(x => x.day === s.day && x.slot === s.slot)) slots.push(s);
     }
   }
   NX._slotsCache.set(timeStr, slots);

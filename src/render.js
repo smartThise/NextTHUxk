@@ -498,7 +498,10 @@ NX.renderPreviewTT = function (courses, label) {
     // 课块：清华课按大节→钟点；外校课（PK/GPK/BW）time 无槽位，
     // 从 note 解析「周X HH:MM-HH:MM」（钟点解析 v2，含复合日/单双周/周段）
     const mk = (day, begin, end, tag) => ({
-      key: (c.code || 'm') + '_' + (c.seq || '0') + '_' + tag, day, begin, end,
+      // 键必须含 day：分道 Map 按 key 记 lane，同一门课多天上同一大节
+      // （tag=大节号）时不含 day 会互相覆盖——某天的重叠簇 lane 数据被
+      // 另一天的孤立块冲掉，渲染取错道宽
+      key: (c.code || 'm') + '_' + (c.seq || '0') + '_' + day + '_' + tag, day, begin, end,
       label: lbl, color: cellColor, probLabel, probBgColor,
       manual: !!c.manual, id: c.id, code: c.code, seq: c.seq || '0', teacher: c.teacher || '', time: c.time || '',
       origin: NX.originOf(c.code), tag,
