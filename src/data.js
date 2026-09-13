@@ -1708,7 +1708,9 @@ NX.isSsoLoginHtml = function (html) {
 
 NX._serverSearchReset = async function () {
   const { state, fetchPage } = NX;
-  await fetchPage(state.BASE + '/xkBks.vxkBksJxjhBs.do?m=kkxxSearch&p_xnxq=' + encodeURIComponent(state.SEM));
+  // _t 与正式查询对齐：重置是 GET 同 URL，HTTP 缓存可能吞掉重置、让会话键
+  // 与服务端实际状态脱节（#46 审阅 fast-follow）
+  await fetchPage(state.BASE + '/xkBks.vxkBksJxjhBs.do?m=kkxxSearch&p_xnxq=' + encodeURIComponent(state.SEM) + '&_t=' + Date.now());
 };
 
 NX._serverSearchSessionKey = function (opts) {
