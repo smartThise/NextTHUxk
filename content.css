@@ -773,3 +773,74 @@
 .nx-sg-star.lv-bad { color: #d64545; }
 .nx-sg-star + .nx-sg-cnt { display: none; }
 .nx-sg-norev { grid-area: right; justify-self: end; align-self: center; font-size: 10px; color: var(--nx-faint); opacity: .7; }
+
+/* OneTHU 石墨工作台：按 OneGUI 的表面、文字、线条与动作角色映射。 */
+#nextthuxk-inner {
+  --nx-ink: #212120;
+  --nx-ink-soft: #50504b;
+  --nx-faint: #6b6b65;
+  --nx-paper: #f7f7f5;
+  --nx-line: rgba(33, 33, 32, .12);
+  --nx-accent: #212120;
+  --nx-green: #18734b;
+  --nx-red: #b42332;
+  --nx-blue: #2865a8;
+  --nx-amber: #8a570c;
+  --nx-glass: #fff;
+  --nx-glass-strong: #fff;
+  --nx-glass-edge: none;
+  --nx-lg-edge: none;
+  --nx-lg-filter: none;
+}
+#nextthuxk-dashboard { color: var(--nx-ink); }
+.nx-header { padding: 14px 24px; background: #fff; border-bottom: 1px solid var(--nx-line); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; gap: 16px; }
+.nx-logo { letter-spacing: 0; white-space: nowrap; }
+#nx-build-tag { color: var(--nx-faint) !important; }
+#nextthuxk-phase-tag { background: #f0f0ee !important; }
+#nextthuxk-launch { background: #212120; color: #fff; box-shadow: 0 6px 20px rgba(33,33,32,.2); backdrop-filter: none; -webkit-backdrop-filter: none; letter-spacing: 0; }
+#nextthuxk-launch:hover { box-shadow: 0 8px 24px rgba(33,33,32,.25); }
+.nx-left { width: 55%; min-width: 0; }
+.nx-right { width: 45%; min-width: 0; background: #fcfcfb; }
+.nx-search-bar { padding: 18px 24px; }
+.nx-search, .nx-inp, .nx-zy-select, .nx-type-select { color: var(--nx-ink); background: #fff; border: 1px solid var(--nx-line); border-radius: 10px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.nx-search:focus, .nx-inp:focus, .nx-zy-select:focus-visible, .nx-type-select:focus-visible { background: #fff; border-color: #50504b; box-shadow: 0 0 0 3px rgba(80,80,75,.16); outline: none; }
+.nx-search::placeholder, .nx-inp::placeholder { color: #6b6b65; }
+.nx-ghost-btn, .nx-exit, .nx-stage-btn, .nx-detail-btn, .nx-vol-btn { border: 1px solid var(--nx-line); background: #fff; color: var(--nx-ink); border-radius: 9px; box-shadow: none; letter-spacing: 0; }
+.nx-ghost-btn:hover, .nx-stage-btn:hover, .nx-detail-btn:hover, .nx-vol-btn:hover:not(:disabled) { color: var(--nx-ink); background: #f0f0ee; border-color: rgba(33,33,32,.22); }
+.nx-exit:hover { background: #fceef0; }
+.nx-filters { gap: 6px; }
+.nx-chip { background: #f0f0ee; border: 1px solid transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.nx-chip:hover { background: #e5e5e2; }
+.nx-chip.on { background: #212120; color: #fff; box-shadow: none; }
+.nx-list { padding: 18px 24px 32px; gap: 10px; }
+.nx-card, .nx-plan-card, .nx-draft-card { background: #fff; border: 1px solid var(--nx-line); border-radius: 14px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.nx-card { padding: 16px 18px; }
+.nx-card:hover { transform: none; background: #fff; border-color: rgba(33,33,32,.25); box-shadow: 0 4px 14px rgba(33,33,32,.06); }
+.nx-card.nx-selected { border-left: 3px solid var(--nx-green); }
+.nx-card-credit { color: var(--nx-ink-soft); }
+.nx-tag-req, .nx-zy-type { background: #f0f0ee; color: var(--nx-ink); }
+.nx-select-btn, .nx-ai-btn, .nx-zy-ok, .nx-draft-go { background: #212120; color: #fff; box-shadow: none; }
+.nx-sec { padding: 20px 24px; }
+.nx-sec-title { margin-bottom: 12px; }
+.nx-plan-card { border-radius: 12px; }
+.nx-plan-card:hover { background: #f7f7f5; border-color: rgba(33,33,32,.3); }
+.nx-plan-card.active { border: 2px solid #212120; }
+.nx-modal, .nx-zy-modal, .nx-suggest { background: #fff; border: 1px solid var(--nx-line); box-shadow: 0 20px 60px rgba(33,33,32,.18); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.nx-stage-item { background: #f0f0ee; box-shadow: none; }
+.nx-lg-banner { background: #fff; border: 1px solid var(--nx-line); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+#nextthuxk-inner button:focus-visible, #nextthuxk-inner a:focus-visible { outline: 2px solid #50504b; outline-offset: 2px; }
+@media (max-width: 720px) {
+  .nx-header { padding: 12px 16px; flex-wrap: wrap; }
+  .nx-header > div:last-child { flex-wrap: wrap; }
+  .nx-main { flex-direction: column; overflow-y: auto; }
+  .nx-left, .nx-right { width: 100%; overflow: visible; }
+  .nx-left { border-right: 0; border-bottom: 1px solid var(--nx-line); }
+  .nx-search-bar { padding: 16px; }
+  #nx-filter-body > div { flex-wrap: wrap; }
+  #nx-filter-body select { min-width: 120px; }
+  .nx-list { flex: none; max-height: 55vh; padding: 16px; }
+  .nx-sec { padding: 18px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #nextthuxk-inner *, #nextthuxk-inner *::before, #nextthuxk-inner *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}

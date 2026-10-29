@@ -5,17 +5,17 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
-  --ink: #1d1f24;
-  --ink-soft: #6b7280;
-  --line: rgba(29,31,36,.08);
-  --accent: #2f6bff;
+  --ink: #212120;
+  --ink-soft: #50504b;
+  --line: rgba(33,33,32,.12);
+  --accent: #212120;
 }
 body {
   width: 280px;
   font-family: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", sans-serif;
   padding: 18px 20px 20px;
   color: var(--ink);
-  background: linear-gradient(160deg, #f4f6fa 0%, #eef1f7 55%, #e9edf5 100%);
+  background: #f7f7f5;
 }
 .othu-logo {
   display: inline-grid;
@@ -91,6 +91,13 @@ body {
   box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(29,31,36,.07), 0 10px 30px rgba(29,31,36,.16);
 }
 .btn:active { transform: translateY(0); }
+/* OneGUI 石墨：实面、细分隔与深色主操作。 */
+.status { background: #fff; border: 1px solid var(--line); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.status.ok { color: #18734b; }
+.status.err { color: #b42332; }
+.btn { background: #212120; color: #fff; border-radius: 10px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.btn:hover { background: #383835; transform: none; box-shadow: none; }
+.btn:focus-visible { outline: 2px solid #50504b; outline-offset: 3px; }
 </style>
 </head>
 <body>
