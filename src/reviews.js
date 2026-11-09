@@ -340,7 +340,7 @@ var NX = NX || {};
   // 联想词：搜索框下拉（本地课程索引 + 社区评分加持）
   // ═══════════════════════════════════════════════════════════
   const SG_MAX = 8;
-  let sgEl = null, sgItems = [], sgIdx = -1, sgBlurTimer = null;
+  let sgEl = null, sgItems = [], sgIdx = -1, sgQuery = '';
 
   function ensureSuggestEl() {
     if (sgEl && sgEl.isConnected) return sgEl;
@@ -402,6 +402,7 @@ var NX = NX || {};
     scored.sort((a, b) => b[0] - a[0]);
     sgItems = scored.slice(0, SG_MAX).map(x => x[1]);
     sgIdx = -1;
+    sgQuery = inp.value;
     if (!sgItems.length) { hideSuggest(); return; }
     el.innerHTML = sgItems.map((c, i) => {
       const tb = c._tbRef;
@@ -421,24 +422,31 @@ var NX = NX || {};
 
   function hideSuggest() {
     if (sgEl) sgEl.classList.remove('show');
-    sgItems = []; sgIdx = -1;
+    sgItems = []; sgIdx = -1; sgQuery = '';
   }
   NX.suggestHide = hideSuggest;
 
   function pickSuggest(i) {
     const c = sgItems[i];
-    if (!c) return;
     const $ = NX.state.$;
     const inp = $('nextthuxk-search');
+    if (!c || !inp || inp.value !== sgQuery || NX.state._searchComposing) {
+      hideSuggest();
+      return;
+    }
+    if (NX.cancelSearchInput) NX.cancelSearchInput();
     if (inp) inp.value = c.name;
     hideSuggest();
     if (inp) inp.focus();
     if (typeof NX.filterCourses === 'function') NX.filterCourses();
+    if (NX.scheduleServerSearch) NX.scheduleServerSearch(true);
   }
 
   // 键盘导航；返回 true 表示事件已消费（调用方可 stopPropagation）
   NX.suggestKey = function (ev) {
+    if (NX.state._searchComposing || ev.isComposing || ev.keyCode === 229) return false;
     if (!sgEl || !sgEl.classList.contains('show') || !sgItems.length) return false;
+    if (NX.state.$('nextthuxk-search')?.value !== sgQuery) { hideSuggest(); return false; }
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();
       sgIdx = ev.key === 'ArrowDown'
@@ -447,8 +455,9 @@ var NX = NX || {};
       Array.from(sgEl.children).forEach((n, i) => n.classList.toggle('on', i === sgIdx));
       return true;
     }
-    if (ev.key === 'Enter') {
-      pickSuggest(sgIdx >= 0 ? sgIdx : 0);
+    if (ev.key === 'Enter' && sgIdx >= 0) {
+      ev.preventDefault();
+      pickSuggest(sgIdx);
       return true;
     }
     if (ev.key === 'Escape') { hideSuggest(); return true; }

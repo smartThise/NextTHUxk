@@ -101,21 +101,77 @@ NX.decodeBest = function (buf, url) {
   return NX._GBK_URL_RE.test(url) ? asGbk : asUtf8;
 };
 
-NX._fetchRaw = async function (url, opts = {}) {
-  // 15s 超时（AbortController）：无超时则单请求挂起会卡死一切等待它的链路
-  // （已选时间回填卡「查询中」实录）
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  let resp;
+NX.httpStatusError = function (status, html) {
+  const visible = html.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  const reason = visible.match(/最新数据(?:还|尚)?未发布/)?.[0] || '';
+  const error = new Error('HTTP ' + status + (reason ? ' · ' + reason : ''));
+  error.status = status;
+  if (reason) error.reason = reason;
+  return error;
+};
+
+NX._abortReasons = new WeakMap();
+NX.abortReason = signal => signal.reason || NX._abortReasons.get(signal) || new DOMException('操作已取消', 'AbortError');
+NX.throwIfAborted = function (signal) {
+  if (signal?.aborted) throw NX.abortReason(signal);
+};
+NX.abortScope = function (parent, timeout) {
+  const controller = new AbortController();
+  const abort = reason => {
+    NX._abortReasons.set(controller.signal, reason);
+    controller.abort(reason);
+  };
+  const relay = () => abort(NX.abortReason(parent));
+  if (parent?.aborted) relay();
+  else parent?.addEventListener('abort', relay, { once: true });
+  const timer = setTimeout(() => abort(new DOMException('查询超时，请重试', 'TimeoutError')), Math.max(0, timeout));
+  return { signal: controller.signal, abort,
+    dispose() { clearTimeout(timer); parent?.removeEventListener('abort', relay); } };
+};
+NX.abortable = function (promise, signal) {
+  if (!signal) return Promise.resolve(promise);
+  if (signal.aborted) {
+    Promise.resolve(promise).catch(() => {});
+    return Promise.reject(NX.abortReason(signal));
+  }
+  return new Promise((resolve, reject) => {
+    const abort = () => { cleanup(); reject(NX.abortReason(signal)); };
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
+};
+NX.abortableDelay = async function (ms, signal) {
+  let timer;
+  try { await NX.abortable(new Promise(resolve => { timer = setTimeout(resolve, ms); }), signal); }
+  finally { clearTimeout(timer); }
+};
+NX.searchScope = function (opts = {}) {
+  const deadline = opts.deadline ?? Date.now() + (opts.forceAll ? 120000 : 60000);
+  return { ...NX.abortScope(opts.signal, deadline - Date.now()), deadline };
+};
+
+NX._readResponse = async function (url, opts = {}) {
+  const scope = NX.abortScope(opts.signal, 15000);
   try {
-    resp = await fetch(url, { credentials: 'include', ...opts, signal: ctl.signal });
-  } finally { clearTimeout(timer); }
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
-  const buf = await resp.arrayBuffer();
+    NX.throwIfAborted(scope.signal);
+    const resp = await NX.abortable(fetch(url, { credentials: 'include', ...opts, signal: scope.signal }), scope.signal);
+    const buf = await NX.abortable(resp.arrayBuffer(), scope.signal);
+    NX.throwIfAborted(scope.signal);
+    return { resp, buf };
+  } finally { scope.dispose(); }
+};
+
+NX._fetchRaw = async function (url, opts = {}) {
+  const { resp, buf } = await NX._readResponse(url, opts);
   const ct = (resp.headers.get('content-type') || '').toLowerCase();
-  if (ct.includes('gb')) return new TextDecoder('gbk').decode(buf);
-  if (ct.includes('utf-8')) return new TextDecoder('utf-8').decode(buf);
-  return NX.decodeBest(buf, url);
+  let html;
+  if (ct.includes('gb')) html = new TextDecoder('gbk').decode(buf);
+  else if (ct.includes('utf-8')) html = new TextDecoder('utf-8').decode(buf);
+  else html = NX.decodeBest(buf, url);
+  if (!resp.ok) throw NX.httpStatusError(resp.status, html);
+  return html;
 };
 
 // WebVPN 票据自愈（OneTHU proxyZhjwxkApi 死页自愈语义回移；用户实录：学生
@@ -128,9 +184,12 @@ NX.fetchPage = async function (url, opts = {}) {
   // （serverSearch 会给「重新登录 WebVPN」的明确指引），不白跑重进。
   if (NX.isSsoLoginHtml && NX.isSsoLoginHtml(html)) return html;
   const shell = html && (html.includes('__vpn_hostname_data') || html.includes('__vpn_app_hostname_data'));
-  if (shell && NX.isXkDeadHtml && NX.reenterZhjwxk) {
-    if (await NX.reenterZhjwxk()) {
-      try { return await NX._fetchRaw(url, opts); } catch (e2) { console.warn(NX.TAG, 'webvpn 换票后重试仍失败，保留壳页给上层诊断', e2); }
+  if (shell && NX.isXkDeadHtml && NX.isXkDeadHtml(html) && NX.reenterZhjwxk) {
+    if (await NX.reenterZhjwxk(opts.signal)) {
+      try { return await NX._fetchRaw(url, opts); } catch (e2) {
+        if (opts.signal?.aborted || e2.name === 'AbortError' || e2.name === 'TimeoutError') throw e2;
+        console.warn(NX.TAG, 'webvpn 换票后重试仍失败，保留壳页给上层诊断', e2);
+      }
     }
   }
   return html;
@@ -140,14 +199,8 @@ NX.fetchPage = async function (url, opts = {}) {
 // 由调用方按解析结果挑——kbSearch 的「候选：」正则只在正确解码下命中，
 // 天然判别器；行数同则替换符少者胜，再同则教务默认 GBK。
 NX.fetchPageDual = async function (url, opts = {}) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  let resp;
-  try {
-    resp = await fetch(url, { credentials: 'include', ...opts, signal: ctl.signal });
-  } finally { clearTimeout(timer); }
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
-  const buf = await resp.arrayBuffer();
+  const { resp, buf } = await NX._readResponse(url, opts);
+  if (!resp.ok) throw NX.httpStatusError(resp.status, NX.decodeBest(buf, url));
   return { gbk: new TextDecoder('gbk').decode(buf), utf8: new TextDecoder('utf-8').decode(buf) };
 };
 
@@ -323,20 +376,26 @@ NX.pagedFetch = async function (opts) {
 
 // ─── Misc Helpers ─────────────────────────────────────────────
 // 固定并发度跑完一批异步任务（无终止语义，与 pagedFetch 的空页终止互补）
-NX.runPool = async function (items, concurrency, fn) {
+NX.runPool = async function (items, concurrency, fn, signal) {
   let i = 0;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (i < items.length) { const idx = i++; await fn(items[idx], idx); }
+    while (i < items.length) {
+      NX.throwIfAborted(signal);
+      const idx = i++;
+      await fn(items[idx], idx);
+    }
   });
   await Promise.all(workers);
 };
 
 NX.debounce = function (fn, ms) {
   let t = 0;
-  return function (...args) {
+  const debounced = function (...args) {
     clearTimeout(t);
-    t = setTimeout(() => fn.apply(this, args), ms);
+    t = setTimeout(() => { t = 0; fn.apply(this, args); }, ms);
   };
+  debounced.cancel = () => { clearTimeout(t); t = 0; };
+  return debounced;
 };
 
 // 小写化缓存（key 为字符串故用 Map；全校课名种类有限，无泄漏风险）

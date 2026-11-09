@@ -1318,7 +1318,7 @@ NX.fetchQueueData = async function (courses) {
     return { map, phase: true };
   } catch (e) {
     console.warn(NX.TAG, 'queue data fetch:', e);
-    return { map: {}, phase: false };
+    return { map: {}, phase: false, notice: e.reason ? e.message : '' };
   }
 };
 
@@ -1581,7 +1581,7 @@ NX.parseTabGrid = function (html, attr) {
   return out;
 };
 
-NX.tabSearchByKch = async function (kch) {
+NX.tabSearchByKch = async function (kch, opts = {}) {
   const { state, fetchPage } = NX;
   const { SEM, BASE } = state;
   if (!state.isZhjwxk && !state.isWebvpn) return [];
@@ -1591,28 +1591,28 @@ NX.tabSearchByKch = async function (kch) {
     { m: 'bxSearch', flag: 'bx', attr: '必修' },
   ];
   for (const tab of tabs) {
+    NX.throwIfAborted(opts.signal);
     try {
       let fh = await fetchPage(BASE + '/xkBks.vxkBksXkbBs.do?m=' + tab.m + '&p_xnxq=' + SEM
-        + '&tokenPriFlag=' + tab.flag + '&p_kch=' + encodeURIComponent(kch) + '&_t=' + Date.now());
+        + '&tokenPriFlag=' + tab.flag + '&p_kch=' + encodeURIComponent(kch) + '&_t=' + Date.now(), { signal: opts.signal });
       if (NX.isXkDeadHtml(fh)) continue;
       if (!/gridData\w*\s*=/.test(fh)) {
         // GET 无网格（会话上下文/参数被忽略）→ 按存档 doQuery() 原样 POST
         const token = (fh.match(/name="token"\s+value="([^"]+)"/) || [])[1] || '';
         if (!token) continue;
-        const resp = await fetch(BASE + '/xkBks.vxkBksXkbBs.do', {
+        fh = await fetchPage(BASE + '/xkBks.vxkBksXkbBs.do', {
           method: 'POST', credentials: 'include',
+          signal: opts.signal,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ m: tab.m, page: '', token, p_xnxq: SEM, tokenPriFlag: tab.flag, p_kch: kch, p_kcm: '', p_rxklxm: '' }),
         });
-        if (!resp.ok) continue;
-        fh = new TextDecoder('gbk').decode(await resp.arrayBuffer());
       }
       const rows = NX.parseTabGrid(fh, tab.attr);
       if (rows.length) {
         console.log(NX.TAG, '外校课号页签检索命中:', kch, tab.attr, rows.length + ' 行');
         return rows;
       }
-    } catch (e) { console.warn(NX.TAG, 'tabSearch ' + tab.m + ':', e); }
+    } catch (e) { NX.throwIfAborted(opts.signal); console.warn(NX.TAG, 'tabSearch ' + tab.m + ':', e); }
   }
   return [];
 };
@@ -1773,46 +1773,77 @@ NX.overrideFromWholeTT = async function (rows) {
 
 // WebVPN 票据自愈：重进一次教务入口根换票（wengine_vpn_ticket 过期而主会话
 // 活着的实录修法）。60s 冷却——合流窗口内 N 个请求全吃壳页只重进一次。
-NX.reenterZhjwxk = async function () {
+NX.reenterZhjwxk = async function (signal) {
+  NX.throwIfAborted(signal);
   const now = Date.now();
-  if (NX.state._reenterAt && now - NX.state._reenterAt < 60000) return false;
-  NX.state._reenterAt = now;
+  let request = NX.state._reenterRequest;
+  if (!request || request.scope.signal.aborted) {
+    if (NX.state._reenterAt && now - NX.state._reenterAt < 60000) return false;
+    NX.state._reenterAt = now;
+    request = { scope: NX.abortScope(null, 15000), users: 0 };
+    request.promise = (async () => {
+      try {
+        const html = await NX._fetchRaw(NX.state.BASE + '/', { signal: request.scope.signal });
+        const ok = !NX.isXkDeadHtml(html);
+        console.log(NX.TAG, 'webvpn 重进入口换票:', ok ? '成功，重试原请求' : '入口返回登录或失效页面');
+        return ok;
+      } catch (e) {
+        NX.throwIfAborted(request.scope.signal);
+        console.warn(NX.TAG, 'webvpn 重进入口失败:', e);
+        return false;
+      } finally {
+        request.scope.dispose();
+        if (NX.state._reenterRequest === request) NX.state._reenterRequest = null;
+      }
+    })();
+    NX.state._reenterRequest = request;
+  }
+  request.users++;
   try {
-    const html = await NX._fetchRaw(NX.state.BASE + '/');
-    const ok = !NX.isXkDeadHtml(html);
-    console.log(NX.TAG, 'webvpn 重进入口换票:', ok ? '成功，重试原请求' : '入口根也是死页=主会话真死，需重新登录');
-    return ok;
-  } catch (e) {
-    console.warn(NX.TAG, 'webvpn 重进入口失败:', e);
-    return false;
+    return await NX.abortable(request.promise, signal);
+  } finally {
+    request.users--;
+    if (!request.users && signal?.aborted && NX.state._reenterRequest === request) {
+      request.scope.abort(NX.abortReason(signal));
+      NX.state._reenterAt = 0;
+    }
   }
 };
 
-NX.isXkDeadHtml = function (html) {
-  return html.includes('accessDenied')
-    || html.includes('用户登陆超时或访问内容不存在。请重试')
-    || html.includes('电子身份服务系统')
-    || html.includes('do/off/ui/auth/login')
-    || html.includes('__vpn_app_hostname_data')
-    || html.includes('__vpn_hostname_data');
+NX.xkPageMarkup = function (html) {
+  return String(html || '').replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
 };
 
-// #38：死页细分——SSO 登录页（用户注销 WebVPN 后教务 302 到统一认证）
-// 与会话超时壳页是两种病：前者换票救不了（主会话真没了），重进入口也
-// 只会再次 302。旧版没有 do/off/ui/auth/login 判据所以「旧版正常」——
-// 2.1 把 SSO 页当死页后，reenterZhjwxk 白跑且错误提示误导。
+// WebVPN 会在正常业务页注入认证脚本。只识别实际登录表单和页面标题。
 NX.isSsoLoginHtml = function (html) {
-  return !!html && (html.includes('do/off/ui/auth/login') || html.includes('passLogin'));
+  const markup = NX.xkPageMarkup(html);
+  return /<form\b[^>]*action\s*=\s*["'][^"']*\/do\/off\/ui\/auth\/login\//i.test(markup)
+    || /<(?:input|div|span)\b[^>]*(?:name\s*=\s*["']i_pass["']|id\s*=\s*["'](?:sm2publicKey|passLogin)["'])/i.test(markup)
+    || /<title\b[^>]*>[^<]*电子身份服务系统/i.test(markup);
 };
 
-NX._serverSearchReset = async function () {
+NX.isXkDeadHtml = function (html) {
+  const markup = NX.xkPageMarkup(html);
+  const visible = markup.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  if (NX.isSsoLoginHtml(html)
+      || /accessDenied|用户登陆超时或访问内容不存在|\b(?:session (?:has )?expired|session (?:has )?timed out|login timed out|please (?:log|sign) in again|access denied)\b/i.test(visible)) return true;
+  const business = /<(?:form|input|textarea|table|iframe|frame|frameset)\b/i.test(markup)
+    || /<a\b[^>]*href\s*=\s*["'][^"']*(?:xkBks\.|jhBks\.|js\.vjs)/i.test(markup)
+    || /\b(?:var|let|const)\s+gridData\w*\s*=\s*\[/i.test(html);
+  if (business) return false;
+  if (/<(?:a|meta)\b[^>]*(?:href|content)\s*=\s*["'][^"']*\/do\/off\/ui\/auth\/login\//i.test(markup)) return true;
+  return html.length < 4000 && html.includes('__vpn_hostname_data') && html.includes('__vpn_app_hostname_data');
+};
+
+NX._serverSearchReset = async function (signal) {
   const { state, fetchPage } = NX;
-  await fetchPage(state.BASE + '/xkBks.vxkBksJxjhBs.do?m=kkxxSearch&p_xnxq=' + encodeURIComponent(state.SEM));
+  await fetchPage(state.BASE + '/xkBks.vxkBksJxjhBs.do?m=kkxxSearch&p_xnxq=' + encodeURIComponent(state.SEM), { signal });
 };
 
 NX._serverSearchSessionKey = function (opts) {
   const { state } = NX;
   const o = opts || {};
+  NX.throwIfAborted(o.signal);
   return JSON.stringify([
     state.SEM, state.BASE,
     (o.kch || '').trim(), (o.kcm || '').trim(), (o.teacher || '').trim(),
@@ -1852,9 +1883,11 @@ NX._serverSearchRaw = async function (opts) {
   const sessionKey = NX._serverSearchSessionKey(o);
   const resetSession = state._serverSearchSessionKey !== sessionKey;
   try {
-    if (resetSession) await NX._serverSearchReset();
-    html = await fetchPage(url);
+    if (resetSession) await NX._serverSearchReset(o.signal);
+    html = await fetchPage(url, { signal: o.signal });
+    NX.throwIfAborted(o.signal);
   } catch (e) {
+    NX.throwIfAborted(o.signal);
     return { rows: [], pageKind: 'unknown', htmlHead: String(e.message || e) };
   }
   if (NX.isSsoLoginHtml(html)) {
@@ -1876,43 +1909,83 @@ NX._serverSearchRaw = async function (opts) {
     : { rows, page, hasMore: false, totalPages, totalRows, pageKind: 'unknown', htmlHead: html.slice(0, 600).replace(/\s+/g, ' ') };
 };
 
-NX._serverSearchQueue = Promise.resolve();
-NX.serverSearch = function (opts) {
-  const request = NX._serverSearchQueue.then(
-    () => NX._serverSearchRaw(opts),
-    () => NX._serverSearchRaw(opts)
-  );
-  NX._serverSearchQueue = request.then(() => {}, () => {});
-  return request;
+NX._serverSearchQueue = [];
+NX._activeServerSearch = null;
+NX.enqueueServerSearch = function (task) {
+  const index = task.opts.interactive
+    ? NX._serverSearchQueue.findIndex(item => !item.opts.interactive) : -1;
+  if (index < 0) NX._serverSearchQueue.push(task);
+  else NX._serverSearchQueue.splice(index, 0, task);
+};
+NX.drainServerSearch = async function () {
+  if (NX._activeServerSearch) return;
+  const task = NX._serverSearchQueue.shift();
+  if (!task) return;
+  if (!task.scope.signal.aborted && Date.now() >= task.scope.deadline) {
+    task.scope.abort(new DOMException('查询超时，请重试', 'TimeoutError'));
+  }
+  const attempt = NX.abortScope(task.scope.signal, task.scope.deadline - Date.now());
+  const active = { task, attempt, interrupted: false };
+  NX._activeServerSearch = active;
+  try {
+    NX.throwIfAborted(attempt.signal);
+    const result = await NX._serverSearchRaw({ ...task.opts, signal: attempt.signal, deadline: task.scope.deadline });
+    NX.throwIfAborted(attempt.signal);
+    task.resolve(result);
+  } catch (error) {
+    NX.state._serverSearchSessionKey = null;
+    if (active.interrupted && !task.scope.signal.aborted) NX.enqueueServerSearch(task);
+    else task.reject(error);
+  } finally {
+    attempt.dispose();
+    NX._activeServerSearch = null;
+    void NX.drainServerSearch();
+  }
+};
+NX.serverSearch = async function (opts = {}) {
+  const scope = NX.searchScope(opts);
+  const request = new Promise((resolve, reject) => {
+    NX.enqueueServerSearch({ opts, scope, resolve, reject });
+    const active = NX._activeServerSearch;
+    // 学校端保存查询条件，需要串行。交互查询先执行，后台任务保留原截止时间续跑。
+    if (opts.interactive && active && !active.task.opts.interactive) {
+      active.interrupted = true;
+      active.attempt.abort(new DOMException('当前搜索优先', 'AbortError'));
+    }
+    void NX.drainServerSearch();
+  });
+  try { return await NX.abortable(request, scope.signal); }
+  finally { scope.dispose(); }
 };
 
-/** 风暴护栏版服务端搜索（OneTHU data.ts newSearch 语义移植）：
- *  精确课号 → 只探 1 页；总页数已知且 ≤25 → 全量；>25 或未知 → 只探 5 页
- *  （绝不做未知 25 连发——历史实录 25 连发把代理 token 打满）。页间 30ms 错峰。
- *  0 行且课名非纯数字 → 教师名兜底重试一次（课名即教师名的输入习惯）。 */
+/** 已知页数完整读取，空首页停止分页，课名无匹配时尝试一次教师名。
+ *  查询与重试共享截止时间，调用方可随输入变化取消整个请求树。 */
 NX.serverSearchStorm = async function (opts) {
+  const scope = NX.searchScope(opts);
+  try { return await NX._serverSearchStorm({ ...opts, signal: scope.signal, deadline: scope.deadline }); }
+  finally { scope.dispose(); }
+};
+NX._serverSearchStorm = async function (opts) {
   const { runPool, serverSearch } = NX;
   const o = opts || {};
+  NX.throwIfAborted(o.signal);
   const exactCode = !o.kcm && !!(o.kch || '').trim();   // OneTHU 语义：kch 非空即精确（含 PK/BW 外校课号）
   const first = await serverSearch({ ...o, page: 1 });
+  NX.throwIfAborted(o.signal);
+  if (first.pageKind === 'unknown') return first;
   let rows = first.rows || [];
   // 外校课号兜底：kkxxSearch 索引不含 BW/PK/GPK 前缀课号 → 一级课表页签
   // 检索表单（任选→限选→必修）原样重搜（教务 web UI 同款路径，实测可搜）
   if (!rows.length && exactCode && !/^\d+$/.test((o.kch || '').trim())) {
-    const tabRows = await NX.tabSearchByKch((o.kch || '').trim());
+    const tabRows = await NX.tabSearchByKch((o.kch || '').trim(), o);
     if (tabRows.length) {
       return { rows: tabRows, page: 1, hasMore: false, totalPages: 1, totalRows: tabRows.length, pageKind: 'ok', viaTab: true };
     }
   }
   const tp = first.totalPages || 0;
-  // 风暴护栏（OneTHU 原码语义）：总页数 ≤25 → 全量；>25 → 只探 5 页（深分页
-  // 大多是宽泛词）；tp 解析失败保守探 25 页。forceAll=「加载全部」按钮 →
-  // 显式全量补齐（用户主动点击，OneTHU loadAllSearch 同款）。
-  // 绝不做课号深页探测（教务返回无过滤首页 + 25 连发打满代理 token 双雷）。
-  // forceAll（「加载全部」按钮 / 跳转静默爬全量）压过课号护栏——旧版 exactCode ? 1
-  // 恒最先命中，课号检索永远只探首页（#32「点了没效果」真根因）。课号检索页数少
-  // （同一课号 ≤ 数页），压力可控（用户定案）。深页结果仍经下方课号前缀过滤兜底。
-  const probeTo = o.forceAll ? (tp > 0 ? tp : 25) : (exactCode ? 1 : (tp > 0 ? (tp <= 25 ? tp : 5) : 25));
+  // 保留精确课号的首页查询与显式补齐。已知总页数完整读取，未知页数有界探测。
+  // 空首页无后续数据依据，直接进入一次教师名兜底，避免扫描并重试空页。
+  const probeTo = !rows.length ? 1 : o.forceAll ? (tp > 0 ? tp : 25) : exactCode ? 1 : (tp > 0 ? tp : 5);
   if (probeTo > 1) {
     const merged = {};
     rows.forEach(r => { merged[r.code + '_' + NX.normSeq(r.seq || '0')] = r; });
@@ -1922,9 +1995,10 @@ NX.serverSearchStorm = async function (opts) {
     const runPages = async (pages, conc, stag) => {
       const fails = [];
       await runPool(pages, conc, async (p, idx) => {
-        await new Promise(r => setTimeout(r, stag * (idx % conc)));
+        await NX.abortableDelay(stag * (idx % conc), o.signal);
         try {
           const r = await serverSearch({ ...o, page: p });
+          NX.throwIfAborted(o.signal);
           let added = 0;
           (r.rows || []).forEach(row => {
             // 课号检索深页护栏：教务若忽略筛选返回未过滤行，只收课号前缀命中的
@@ -1933,8 +2007,8 @@ NX.serverSearchStorm = async function (opts) {
             if (!merged[k]) { merged[k] = row; rows.push(row); added++; }
           });
           if (!(r.rows || []).length || added === 0) fails.push(p);   // 空页/回吐页 → 重试
-        } catch (e) { fails.push(p); console.warn(NX.TAG, 'server search page', p, e); }
-      });
+        } catch (e) { NX.throwIfAborted(o.signal); fails.push(p); console.warn(NX.TAG, 'server search page', p, e); }
+      }, o.signal);
       return fails;
     };
     const pages = [];
@@ -1945,10 +2019,12 @@ NX.serverSearchStorm = async function (opts) {
     // 持续限流，隔 700ms 逐个再给一次机会
     let fails = await runPages(pages, 5, 30);
     for (let round = 0; round < 2 && fails.length; round++) {
+      NX.throwIfAborted(o.signal);
       console.warn(NX.TAG, '翻页失败重试 第' + (round + 1) + '轮:', fails.join(','));
       fails = await runPages(fails, 2, 250);
     }
     if (fails.length) {
+      NX.throwIfAborted(o.signal);
       console.warn(NX.TAG, '翻页失败重试 第3轮(单并发):', fails.join(','));
       fails = await runPages(fails, 1, 700);
     }
@@ -1956,7 +2032,7 @@ NX.serverSearchStorm = async function (opts) {
   }
   // 教师名兜底：课名 0 行且非纯数字 → 换教师通道重试一次（单页 + 已知页数）
   if (!rows.length && o.kcm && o.kcm.trim() && !/^\d+$/.test(o.kcm.trim()) && !o.teacher) {
-    const retry = await NX.serverSearchStorm({ ...o, kcm: '', teacher: o.kcm.trim() });
+    const retry = await NX._serverSearchStorm({ ...o, kcm: '', teacher: o.kcm.trim() });
     if (retry.rows && retry.rows.length) return retry;
   }
   return {

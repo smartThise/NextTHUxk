@@ -335,6 +335,7 @@ NX.launch = async function launch() {
     (async () => {
       const qResult = await NX.fetchQueueData(pool).catch(e => { console.warn(TAG, 'queue:', e); return { map: {}, phase: false }; });
       state.queueDataMap = qResult.map;
+      if (qResult.notice) showXkResult({ ok: false, msg: qResult.notice });
       state.isQueuePhase = qResult.phase;   // OneTHU getXkQueueData 语义：xkqkSearch gridData 有无（预选阶段候补非空不代表排队阶段——旧 || 候选兜底把预选也判成排队，志愿同步永远不跑）
       if (state.isQueuePhase) {
         // 队列阶段：池行余量合并（卡片 余X/Y 徽章、可选筛选、概率网格用）
@@ -603,6 +604,7 @@ $('nextthuxk-exit').onclick = () => toggle(false);
 NX.syncQueueAndVol = async function () {
   const qResult = await NX.fetchQueueData(state.allCourses);
   state.queueDataMap = qResult.map;
+  if (qResult.notice) showXkResult({ ok: false, msg: qResult.notice });
   state.isQueuePhase = qResult.phase;   // OneTHU getXkQueueData 语义：xkqkSearch gridData 有无（预选阶段候补非空不代表排队阶段——旧 || 候选兜底把预选也判成排队，志愿同步永远不跑）
   state.candidateCourses = await NX.fetchCandidateCourses();
   if (state.candidateCourses.length) await NX.backfillCandidateMeta(state.candidateCourses).catch(e => console.warn(TAG, 'cand meta:', e));
@@ -625,17 +627,51 @@ NX.syncQueueAndVol = async function () {
   renderPreviewTT(NX.getPreviewCourses(), '当前已选');
   NX.renderCacheInfo();
 };
-$('nextthuxk-search').oninput = NX.debounce(function () {
+const updateSearchInput = NX.debounce(function () {
+  if (state._searchComposing) return;
   try { if (NX.suggestUpdate) NX.suggestUpdate(); } catch (e) {}
   filterCourses();
 }, 120);
+NX.cancelSearchInput = function () {
+  updateSearchInput.cancel();
+  NX.cancelServerSearch();
+  state._searchComposing = false;
+  state._jumpCode = null;
+  state._jumpAutoAll = false;
+  clearTimeout(NX._sgBlurT);
+  try { NX.suggestHide && NX.suggestHide(); } catch (e) {}
+};
+$('nextthuxk-search').oninput = function (e) {
+  const composing = state._searchComposing || !!e?.isComposing;
+  NX.cancelSearchInput();
+  state._searchComposing = composing;
+  state._browsePage = 1;
+  NX.updateSearchClear();
+  if (composing) return;
+  if (!this.value.trim()) {
+    filterCourses();
+    NX.scheduleServerSearch(true);
+    return;
+  }
+  updateSearchInput();
+};
+$('nextthuxk-search').addEventListener('compositionstart', function () {
+  NX.cancelSearchInput();
+  state._searchComposing = true;
+});
+$('nextthuxk-search').addEventListener('compositionend', function () {
+  state._searchComposing = false;
+  this.oninput();
+});
 $('nextthuxk-search').addEventListener('keydown', function (e) {
+  if (state._searchComposing || e.isComposing || e.keyCode === 229) return;
   try {
     if (NX.suggestKey && NX.suggestKey(e)) { e.stopPropagation(); return; }
   } catch (err) {}
   // 回车立即查询（跳过 500ms 防抖，OneTHU 同款显式提交语义）
   if (e.key === 'Enter') {
     e.preventDefault();
+    NX.cancelSearchInput();
     try { NX.filterCourses(); NX.scheduleServerSearch(true); } catch (err) {}
   }
 });
@@ -645,9 +681,11 @@ $('nextthuxk-search').addEventListener('blur', function () {
   NX._sgBlurT = setTimeout(() => { try { NX.suggestHide && NX.suggestHide(); } catch (e) {} }, 150);
 });
 $('nextthuxk-search-clear').onclick = () => {
+  NX.cancelSearchInput();
   $('nextthuxk-search').value = '';
+  state._browsePage = 1;
   filterCourses();
-  try { NX.suggestHide && NX.suggestHide(); } catch (e) {}
+  NX.scheduleServerSearch(true);
   $('nextthuxk-search').focus();
 };
 $('nx-filter-credits').onchange = filterCourses;

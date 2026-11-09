@@ -711,6 +711,7 @@ NX.jumpToCourse = function (code, seq, teacher, time) {
   const search = $('nextthuxk-search');
   const list = $('nextthuxk-list');
   if (!search || !list || !code) return;
+  if (NX.cancelSearchInput) NX.cancelSearchInput();
 
   state.activeGroup = null;
   state.shadow.querySelectorAll('.nx-chip').forEach(chip => {
@@ -1208,6 +1209,45 @@ NX.serverSigOf = function () {
     $('nx-filter-period')?.value || '',
   ]);
 };
+
+NX.cancelServerSearch = function (invalidate = true) {
+  clearTimeout(NX._ssTimer);
+  NX._ssTimer = null;
+  const state = NX.state;
+  const run = state._searchRun;
+  state._searchRun = null;
+  if (run) {
+    run.scope.abort(new DOMException('搜索已取消', 'AbortError'));
+    run.scope.dispose();
+  }
+  state._ssBusy = false;
+  state._loadingAll = false;
+  state._ssPending = false;
+  state._loadAllPending = false;
+  state._searchDeferred = false;
+  state._jumpCrawling = false;
+  if (invalidate) state._serverSig = null;
+};
+NX.beginSearchRun = function (forceAll = false) {
+  NX.cancelServerSearch(false);
+  const run = { scope: NX.searchScope({ forceAll }), sig: NX.serverSigOf() };
+  NX.state._searchRun = run;
+  return run;
+};
+NX.currentSearchRun = run => NX.state._searchRun === run && NX.serverSigOf() === run.sig;
+NX.checkSearchRun = function (run) {
+  if (!NX.currentSearchRun(run)) throw new DOMException('搜索已取消', 'AbortError');
+  NX.throwIfAborted(run.scope.signal);
+};
+NX.finishSearchRun = function (run) {
+  run.scope.dispose();
+  const current = NX.currentSearchRun(run);
+  if (NX.state._searchRun !== run) return false;
+  NX.state._searchRun = null;
+  NX.state._ssBusy = false;
+  NX.state._loadingAll = false;
+  return current;
+};
 NX.filterCourses = function () {
   const { state, renderCourses, renderPlanView, lc, esc } = NX;
   const $ = state.$;
@@ -1215,8 +1255,9 @@ NX.filterCourses = function () {
   const rawQ = $('nextthuxk-search').value;
   const q = rawQ.toLowerCase();   // 用户输入不入缓存（中间态多），课程字段才走 lc
   NX.updateSearchClear();
+  if (state._searchComposing) return;
   const f = state.shadow.querySelector('.nx-chip.on')?.dataset.f || 'all';
-  if (f === 'plan') { renderPlanView(q); return; }
+  if (f === 'plan') { NX.cancelServerSearch(false); renderPlanView(q); return; }
 
   // —— 服务端条件指纹：这些变化 = 换一次服务器查询（OneTHU newSearch 语义）。
   //    注意 f（chip）不入指纹：必修/限选/体育/可选/已选/队列全是本地过滤
@@ -1224,6 +1265,12 @@ NX.filterCourses = function () {
   //    conflict/credits/reviews/sort/xknote 同样只本地细化。
   const serverSig = NX.serverSigOf();
   const sigChanged = serverSig !== state._serverSig;
+  if (sigChanged) {
+    NX.cancelServerSearch(false);
+    state._searchError = '';
+    state._searchTotalPages = 0;
+    state._searchTotalRows = 0;
+  }
   state._serverSig = serverSig;
   // 必修/限选/体育也是本地池过滤（用户二十二报：v1.5.0 语义——chip 过滤
   // 课程池而非当前搜索行；搜索行是浏览快照，attr 覆盖稀疏，滤完必空）
@@ -1476,12 +1523,15 @@ NX.loadSearchPageTo = async function (target) {
   const cap = state._searchTotalPages || 0;
   const to = cap > 0 ? Math.min(target, cap) : target;
   if (to <= loaded) return;
+  const run = NX.beginSearchRun(true);
   state._loadingAll = true;
+  let finished = false;
   try {
     const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
     const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
     for (let p = loaded + 1; p <= to; p++) {
-      const res = await NX.serverSearch({ ...NX.buildSearchOpts(), page: p });
+      const res = await NX.serverSearch({ ...NX.buildSearchOpts(), page: p, signal: run.scope.signal, deadline: run.scope.deadline });
+      NX.checkSearchRun(run);
       const rows = res.rows || [];
       if (!rows.length) break;
       const seen = new Set((state._searchRows || []).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
@@ -1493,8 +1543,10 @@ NX.loadSearchPageTo = async function (target) {
       });
       if (NX.mergeServerRows(rows)) NX.rebuildCourseMap();
     }
-  } catch (e) { console.warn(NX.TAG, 'search page load:', e); }
-  state._loadingAll = false;
+  } catch (e) {
+    if (NX.currentSearchRun(run) && e.name !== 'AbortError') state._searchError = '查询失败：' + e.message;
+  } finally { finished = NX.finishSearchRun(run); }
+  if (!finished) return;
   state._uiPage = Math.min(to, Math.max(1, Math.ceil((state._searchRows || []).length / NX.PAGE_SIZE)));
   NX.filterCourses();
 };
@@ -1505,13 +1557,18 @@ NX.loadAllSearch = async function () {
   const state = NX.state;
   if (state._loadingAll) return;
   if (state._ssBusy) { state._loadAllPending = true; return; }   // 管线跑动中：排队而非静默丢弃（#32）
+  const run = NX.beginSearchRun(true);
   state._loadingAll = true;
+  let finished = false;
   state._searchRowsFull = false;
   NX.filterCourses();   // 提示条立即变「加载中…」
   try {
     const opts = NX.buildSearchOpts();
     opts.forceAll = true;
+    opts.signal = run.scope.signal;
+    opts.deadline = run.scope.deadline;
     const res = await NX.serverSearchStorm(opts);
+    NX.checkSearchRun(run);
     const selKeys = new Set(state.allCourses.filter(c => c.selected).map(c => c.code + '_' + NX.normSeq(c.seq || '0')));   // 键归一：已选 '1' vs 搜索行 '01' → #43 标记丢失
     const candKeys = new Set(state.candidateCourses.map(c => c.code + '_' + NX.normSeq(c.seq || '0')));
     (res.rows || []).forEach(r => {
@@ -1535,11 +1592,11 @@ NX.loadAllSearch = async function () {
     }
     if (res.totalPages) state._searchTotalPages = res.totalPages;
     if (res.totalRows) state._searchTotalRows = res.totalRows;
-    state._searchError = res.pageKind === 'unknown' ? '教务返回异常页（已自动重进未果，WebVPN 会话已失效）——请退出 WebVPN 重新登录' : '';
+    state._searchError = res.pageKind === 'unknown' ? String(res.htmlHead || '教务暂未返回可识别的课程结果，请重试。') : '';
   } catch (e) {
-    console.warn(NX.TAG, 'load all:', e);
-  }
-  state._loadingAll = false;
+    if (NX.currentSearchRun(run) && e.name !== 'AbortError') state._searchError = '查询失败：' + e.message;
+  } finally { finished = NX.finishSearchRun(run); }
+  if (!finished) return;
   state._jumpCrawling = false;
   if (state._searchDeferred) {
     state._searchDeferred = false;
@@ -1594,7 +1651,7 @@ NX.browseGoto = function (page) {
 
 // ─── 服务器随时查询调度（OneTHU 同款：输入 500ms 防抖，回车立即查）────
 // 查询模式（关键词/服务端筛选非空）→ 风暴护栏版多页探测；浏览模式（全空）
-// → 只取当前页 1 个请求。跑动中条件再变 → 收敛后自动补跑。
+// → 只取当前页 1 个请求。条件改变立即中止旧运行，回填以本次签名为准。
 // 课号路由（OneTHU Courses.tsx codeLike 规则，支持 PK/GPK/BW 外校课号）：
 // ≥5 位、无中文、含数字、字母数字连字符 → 课号（截「-」前段）；否则课名。
 NX.isCodeLike = function (kw) {
@@ -1608,6 +1665,7 @@ NX.buildSearchOpts = function () {
   const f = state.shadow.querySelector('.nx-chip.on')?.dataset.f || 'all';
   const codeLike = NX.isCodeLike(rawQ);
   return {
+    interactive: true,
     // 课号注入搜索栏（OneTHU 定稿：课号保持，无自动清词）
     kch: codeLike ? rawQ.split(/[-–]/)[0].trim() : '',
     kcm: codeLike ? '' : rawQ,
@@ -1622,18 +1680,23 @@ NX.buildSearchOpts = function () {
 };
 NX.runServerSearch = async function () {
   const state = NX.state;
+  if (state._searchComposing) return;
   if (state._ssBusy) { state._ssPending = true; return; }
   if (state._loadingAll) { state._searchDeferred = true; return; }   // 补齐中：延后重跑，别把全量结果盖回去
+  const run = NX.beginSearchRun();
   state._ssBusy = true;
+  let finished = false;
   try {
-    for (let guard = 0; guard < 4; guard++) {
-      const ranSig = state._serverSig;
+    {
       const opts = NX.buildSearchOpts();
+      opts.signal = run.scope.signal;
+      opts.deadline = run.scope.deadline;
       const queryMode = !!(opts.kch || opts.kcm || opts.weekday || opts.section || opts.grade
         || opts.rxklxm || opts.kctsm || opts.onlyAvailable || opts.gradAvail);
       if (!queryMode) opts.page = state._browsePage || 1;   // 浏览模式：单页
       try {
         let res = queryMode ? await NX.serverSearchStorm(opts) : await NX.serverSearch(opts);
+        NX.checkSearchRun(run);
         const requestedPage = opts.page || 1;
         const browsePageMismatch = result => !queryMode
           && requestedPage > 1
@@ -1643,6 +1706,7 @@ NX.runServerSearch = async function () {
         if (browsePageMismatch(res)) {
           console.warn(NX.TAG, 'browse page mismatch:', requestedPage, '/', res.totalPages, 'retry once');
           res = await NX.serverSearch({ ...opts, page: requestedPage });
+          NX.checkSearchRun(run);
           if (browsePageMismatch(res)) {
             state._browseMismatch = true;
             throw new Error('browse pagination mismatch: page ' + requestedPage + ' > total ' + res.totalPages);
@@ -1660,6 +1724,7 @@ NX.runServerSearch = async function () {
           if (poolHit) {
             console.log(NX.TAG, '课号 0 行 → 课名重搜:', opts.kch, '→', poolHit.name);
             const res2 = await NX.serverSearchStorm(Object.assign({}, opts, { kch: '', kcm: poolHit.name }));
+            NX.checkSearchRun(run);
             if ((res2.rows || []).length) { res = res2; opts.kcm = poolHit.name; }
           }
         }
@@ -1694,16 +1759,16 @@ NX.runServerSearch = async function () {
           // 分页条出「加载全部」补齐入口
           state._searchIncomplete = queryMode && !!(res.totalRows && (res.rows || []).length < res.totalRows);
           state._searchError = res.pageKind === 'unknown'
-            ? '教务返回异常页' + (res.htmlHead ? '（' + String(res.htmlHead).slice(0, 80) + '…）' : '') + '（已自动重进未果）——请退出 WebVPN 重新登录'
+            ? String(res.htmlHead || '教务暂未返回可识别的课程结果，请重试。')
             : (res.pageKind === 'empty' ? '' : '');
         }
       } catch (e) {
+        if (!NX.currentSearchRun(run) || e.name === 'AbortError') return;
         console.warn(NX.TAG, 'server search scheduled:', e);
         state._searchRows = state._searchRows || [];
         state._browseHasMore = false;
         state._searchError = '查询失败：' + (e && e.message ? e.message : e);
       }
-      if (state._serverSig === ranSig) break;   // 条件未再变 → 收敛
     }
     if (state._browseMismatch && state._browseRestore) {
       const restore = state._browseRestore;
@@ -1714,12 +1779,15 @@ NX.runServerSearch = async function () {
       state._browseHasMore = restore.hasMore;
       state._browseRestore = null;
       state._searchError = '\u6559\u52a1\u8fd4\u56de\u5206\u9875\u5f02\u5e38\uff0c\u5df2\u4fdd\u7559\u539f\u9875\u7801';
+      run.sig = NX.serverSigOf();
+      state._serverSig = run.sig;
     }
     state._browseMismatch = false;
   } finally {
-    NX.finishInitialBrowse(false);
-    state._ssBusy = false;
+    finished = NX.finishSearchRun(run);
+    if (finished) NX.finishInitialBrowse(false);
   }
+  if (!finished) return;
   if (state._ssPending) { state._ssPending = false; NX.runServerSearch(); return; }
   if (state._loadAllPending) { state._loadAllPending = false; NX.loadAllSearch(); return; }   // #32：排队的补齐
   NX.filterCourses();   // sig 未变 → 直接渲染新结果（不再触发查询）
@@ -1728,6 +1796,7 @@ NX.runServerSearch = async function () {
 // 防抖入口（filterCourses 用）；immediate=true 时跳过防抖立即查（回车/跳转用）
 NX.scheduleServerSearch = function (immediate) {
   clearTimeout(NX._ssTimer);
+  if (NX.state._searchComposing) { NX._ssTimer = null; return; }
   NX._ssTimer = setTimeout(() => { NX._ssTimer = null; NX.runServerSearch(); }, immediate ? 0 : 500);
 };
 
